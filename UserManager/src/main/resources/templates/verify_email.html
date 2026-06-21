@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+<meta charset="UTF-8">
+<title>Verification Email</title>
+</head>
+<body>
+	<!-- th:text dynamically inserts the user's name from the User object -->
+	<div>
+		Welcome <b th:text="${user.firstName} + ' ' + ${user.lastName}"></b>!
+	</div>
+	<div>
+		Your username is <b th:text="${user.username}"></b>
+	</div>
+	<div>
+		<p>Click the link below to verify your email and complete your
+			registration:</p>
+		<!-- This builds: http://localhost:5173/user/verifyEmail?token=<jwt> -->
+		<p th:text="${client} + '/' + ${param} + '?token=' + ${token}"></p>
+		<p>This link is valid for 24 hours.</p>
+		<p>If you did not sign up, you can safely ignore this email.</p>
+		<p>
+			Need help? Contact us Monday–Friday, 8:30am–5pm Eastern:<br />
+			Toll-free: 1-800-222-1111
+		</p>
+	</div>
+</body>
+</html>
