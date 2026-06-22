@@ -5,7 +5,7 @@ import java.sql.Timestamp;
 import jakarta.persistence.*;
 
 @Entity // Marks this class as a JPA entity (database table)
-@Table(name = "\"Users\"") // Maps to the 'Users' table (case-sensitive)
+@Table(name = "users") // Maps to the 'Users' table (case-sensitive)
 public class User implements Serializable {
 
 	private static final long serialVersionUID = 1L;
