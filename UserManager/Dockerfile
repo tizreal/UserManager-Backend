@@ -1,10 +1,10 @@
 # Stage 1 — build the JAR
 FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /app
-COPY usermanager/pom.xml .
-COPY usermanager/src src
-COPY usermanager/mvnw .
-COPY usermanager/.mvn .mvn
+COPY UserManager/pom.xml .
+COPY UserManager/src src
+COPY UserManager/mvnw .
+COPY UserManager/.mvn .mvn
 RUN chmod +x ./mvnw
 RUN ./mvnw clean package -DskipTests
 
