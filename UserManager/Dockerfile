@@ -1,14 +1,14 @@
-# Stage 1 — build the JAR using Maven
+# Stage 1 — build the JAR
 FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /app
-COPY pom.xml .
-COPY src src
-COPY mvnw .
-COPY .mvn .mvn
+COPY usermanager/pom.xml .
+COPY usermanager/src src
+COPY usermanager/mvnw .
+COPY usermanager/.mvn .mvn
 RUN chmod +x ./mvnw
 RUN ./mvnw clean package -DskipTests
 
-# Stage 2 — run the JAR on a slim JRE
+# Stage 2 — run the JAR
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
