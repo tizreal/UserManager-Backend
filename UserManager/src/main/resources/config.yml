@@ -8,7 +8,7 @@ app:
       audience: User Manager
       prefix: 'Bearer '
       excluded:
-        urls: /user/login,/user/signup,/user/reset/*,/user/verify/email,/test/**,/error
+        urls: /user/login,/user/signup,/user/reset/*,/user/verify/email,/test/**,/error,/health
   mail:
     from: "noreply@usermanager.com"
     verification-subject: "Verify your email address"

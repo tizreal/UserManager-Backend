@@ -144,4 +144,6 @@ public class User implements Serializable {
 		return "User [userId=" + userId + ", username=" + username + ", email=" + email + ", emailVerified="
 				+ emailVerified + "]";
 	}
+
+
 }
