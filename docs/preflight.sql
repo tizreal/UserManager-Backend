@@ -70,3 +70,30 @@ ORDER BY 1, 2;
 -- 10. Demo account state (must exist, verified). Shows no credentials.
 SELECT user_id, user_name, email_verified, created_at, updated_at
 FROM users WHERE user_name = 'demo';
+
+-- =====================================================================================
+-- Section B (added later): privileges and connection checks for Flyway. Still READ-ONLY.
+-- Run these while connected AS THE SAME ROLE the application uses (DATABASE_USERNAME).
+-- In the Neon SQL editor, pick that role in the role selector if it differs from the default.
+-- =====================================================================================
+
+-- B1. Which role is this session using? Must equal the app's DATABASE_USERNAME.
+SELECT current_user, session_user, current_database();
+
+-- B2. Owners of the existing tables. ALTER TABLE (V2, V4) and CREATE INDEX require the app
+--     role to own "users". Expected: tableowner = the app role for all three tables.
+SELECT tablename, tableowner FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;
+
+-- B3. The app role can create tables in "public" (V3 creates password_reset_tokens, and
+--     Flyway creates flyway_schema_history). Expected: true, true.
+SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_in_public,
+       has_schema_privilege(current_user, 'public', 'USAGE')  AS can_use_public;
+
+-- B4. Server settings relevant to running DDL (informational).
+SELECT name, setting FROM pg_settings
+WHERE name IN ('server_version', 'lock_timeout', 'statement_timeout', 'idle_in_transaction_session_timeout');
+
+-- B5. NOT A QUERY: check whether DATABASE_URL in Render points at Neon's pooler
+--     (host contains "-pooler"). If it does, set SPRING_FLYWAY_URL (and SPRING_FLYWAY_USER /
+--     SPRING_FLYWAY_PASSWORD) to the DIRECT (non-pooler) endpoint so migrations run on a
+--     normal session. The application itself can keep using the pooler.
