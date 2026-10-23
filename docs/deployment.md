@@ -1,169 +1,227 @@
 # Security release: deployment runbook
 
-This release fixes critical authorization and data-exposure vulnerabilities and adds
-Flyway migrations (V1 baseline, V2–V4). Every step marked **[approval]** changes production
-and requires explicit approval before it is run. The backend stays closed to the public
-(suspended, then maintenance mode) until it has been verified.
+This release fixes critical authorization and data-exposure vulnerabilities and adds Flyway
+migrations (V1 baseline, V2–V4). Every step marked **[approval]** changes production and needs
+explicit approval first. The backend stays closed to the public (suspended, then maintenance
+mode) until it has been verified. A condensed checklist is in `docs/deployment-checklist.md`.
 
 **Never redeploy a backend commit older than this release.** Older builds are vulnerable.
-"Rollback" means maintenance mode, suspension, or a fix-forward (section 7), never the old
-build.
+"Rollback" means maintenance mode, suspension, or a fix-forward (section 8), never the old build.
+
+Versions: Spring Boot 3.4.1, Hibernate 6.6.4, Flyway 10.20.1, PostgreSQL JDBC 42.7.4.
 
 ## 1. Preflight (read-only)
 
-Run `docs/preflight.sql` against production (Neon SQL editor, read-only session) and review:
+Run `docs/preflight.sql` in the Neon SQL editor. Run section B **as the role the app uses**
+(`DATABASE_USERNAME`).
 
 | Check | Expected | If not |
 |---|---|---|
-| 1. Tables | `comments`, `posts`, `users`; no `flyway_schema_history` | Stop: schema differs from the assumed baseline |
-| 2. Columns | Match `V1__baseline_schema.sql` (extra columns are fine) | Stop if a mapped column or table is missing |
-| 3. New column names | No rows | Review conflicting definitions |
-| 4. New constraint/index names | No rows | Rename in a new migration |
-| 5. Case-insensitive duplicates | No rows | V2 would fail; resolving them changes data **[approval]** |
-| 6. `deleted-user-` usernames | No rows | Rename the account first **[approval]** |
-| 7. Row counts / PG version | PG ≥ 11 | Pre-11 would rewrite tables on ADD COLUMN DEFAULT |
-| 8–9. Incident queries | Ideally no rows | Investigate (section 8) |
-| 10. Demo account | Exists, verified | The seeder recreates it on boot if `app.seed-demo=true` |
+| 1 Tables | `comments`, `posts`, `users`; no `flyway_schema_history` | Stop: the baseline assumption is wrong |
+| 2 Columns | Match `V1__baseline_schema.sql` (extra columns are fine) | Stop if a mapped column/table is missing |
+| 3 New column names | No rows | Review conflicting definitions |
+| 4 New constraint/index names | No rows | Rename in a new migration |
+| 5 Case-insensitive duplicates | No rows | V2 would fail; remediation changes data **[approval]** |
+| 6 `deleted-user-` usernames | No rows | Rename first **[approval]** |
+| 7 Counts / PG version | PG ≥ 11 | Older versions rewrite tables on `ADD COLUMN … DEFAULT` |
+| 8–9 Incident queries | Ideally no rows | Section 9 |
+| 10 Demo account | Exists, verified | Recreated by the seeder if `APP_SEED_DEMO=true` |
+| B1 Session role | = `DATABASE_USERNAME` | Re-run section B as that role |
+| B2 Table owners | = app role | `ALTER TABLE` would fail: transfer ownership or migrate as the owner **[approval]** |
+| B3 `public` privileges | `CREATE`, `USAGE` = true | Grant, or migrate as the owner **[approval]** |
+| B5 Pooler | `DATABASE_URL` host without `-pooler` | Set `SPRING_FLYWAY_URL` (+ `_USER`, `_PASSWORD`) to the direct endpoint |
 
-Also confirm in Render (values not shared): `JWT_SECRET` is set and at least 32 bytes. The app
-now refuses to start otherwise.
+## 2. How Flyway will behave on production (tested in `MigrationIT`)
 
-## 2. Migration compatibility and rollback assessment
+- Production has tables but no `flyway_schema_history`. With `baseline-on-migrate=true` and
+  `baseline-version=1`, Flyway creates the history table, records **one `BASELINE` row at
+  version 1** (V1's SQL is never run), then applies V2, V3, V4. Resulting history:
+  `1:BASELINE, 2:SQL, 3:SQL, 4:SQL`.
+- Each migration runs in its own transaction; PostgreSQL DDL is transactional, so a failure
+  leaves no partial change (tested: duplicate usernames stop V2 cleanly). Flyway holds an
+  advisory lock while migrating, which is why a direct (non-pooled) connection is required.
+- Existing rows become `role=USER`, `token_version=0`, `status=ACTIVE`; no existing data is
+  modified (tested on a populated database). A second run is a no-op.
+- Hibernate then validates the schema (`ddl-auto=validate`) and the app starts.
 
-| Migration | Change | Lock/duration on a small table | Reversibility |
+| Migration | Change | Locks at this table size | Reversibility |
 |---|---|---|---|
-| V1 | Not executed on production: recorded as baseline | — | — |
-| V2 | `role`, `token_version` (constant defaults); role CHECK; unique indexes on `lower(user_name)`, `lower(email)` | ADD COLUMN with a constant default is metadata-only on PG ≥ 11. The CHECK validates existing rows and the index builds take brief write locks; milliseconds at this size | Additive |
+| V2 | `role`, `token_version` (constant defaults), role CHECK, unique `lower(user_name)` / `lower(email)` indexes | Metadata-only column adds (PG ≥ 11); brief locks for the CHECK and index builds | Additive |
 | V3 | `password_reset_tokens` table | New table | Additive |
 | V4 | `status` (default ACTIVE) + CHECK, `deleted_at`, `pending_email` | As V2 | Additive |
 
-- Each migration runs in its own transaction (PostgreSQL DDL is transactional), so a failure
-  leaves no partial change. The failure path for V2 is covered by `MigrationIT`.
-- Existing rows become `role=USER`, `token_version=0`, `status=ACTIVE`. No existing data is
-  modified (`MigrationIT` checks this on a populated database).
-- Migrations are forward-only. There are no down-migrations; the database rollback path is the
-  Neon backup branch (section 3). The extra columns are harmless to any future code.
+Migrations are forward-only. The database rollback path is the Neon backup (section 4).
 
-## 3. Database backup and restore
+## 3. Environment variables (Render)
+
+| Variable | Required | Value for this release |
+|---|---|---|
+| `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD` | Yes | Unchanged |
+| `SPRING_FLYWAY_URL`, `SPRING_FLYWAY_USER`, `SPRING_FLYWAY_PASSWORD` | Only if `DATABASE_URL` uses the Neon pooler | Direct endpoint and owner credentials |
+| `JWT_SECRET` | Yes, ≥ 32 bytes (startup check) | Rotate (section 7) **[approval]** |
+| `JWT_EXPIRATION` | No (default 86400000 = 24h) | Recommended `14400000` (4h); see `docs/security-review.md` |
+| `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD` | As today | Unchanged |
+| `CLIENT_URL` | Yes | Unchanged (frontend URL, used in email links) |
+| `APP_SEED_DEMO`, `DEMO_PASSWORD`, `DEMO_USERNAME` | As today | Unchanged |
+| `DEMO_CONTENT_RETENTION`, `DEMO_CLEANUP_CRON` | No | Defaults `PT24H` / `-` (schedule off). Optional: `0 0 * * * *` (hourly) |
+| `MAINTENANCE_MODE`, `MAINTENANCE_BYPASS_KEY` | During rollout | `true` + `openssl rand -hex 32` **[approval]** |
+| `CLIENT_IP_MODE`, `CLIENT_IP_HEADER`, `CLIENT_IP_TRUSTED_PROXIES`, `CLIENT_IP_DIAGNOSTICS` | No | Start `UNKNOWN` + diagnostics `true` during the window; then per section 6 |
+| `LOG_LEVEL`, `WEB_LOG_LEVEL` | No | Leave unset (INFO) |
+| `CORS_ALLOWED_ORIGINS`, `RATE_LIMIT_ENABLED` | No | Leave unset |
+| `DDL_AUTO` | — | **Remove** (no longer read; Flyway owns the schema) |
+
+The maintenance bypass key lives only in Render and in your terminal while you smoke-test.
+It is never placed in the frontend (no `VITE_` variable), never in a URL (query parameters and
+cookies are ignored, as tested), and never logged (tested at DEBUG).
+
+## 4. Database backup and restore
 
 **Backup** **[approval]**, immediately before deploying:
-1. Neon console → project → **Branches** → **New branch**, parent `main` (or the production
-   branch), from **current point in time**, named `pre-security-release-YYYYMMDD`.
-2. On the new branch, run `docs/preflight.sql` query 7 and confirm the counts match production.
+1. Neon console → Branches → New branch from the production branch at the current time,
+   named `pre-security-release-YYYYMMDD`.
+2. Run preflight query 7 on the new branch; the counts must match production.
 
-**Restore** (only if production data is damaged) **[approval]**:
-- Put the backend in maintenance mode or suspend it first.
-- Option A: Neon **Restore** the production branch to the timestamp just before deployment
-  (point-in-time restore, within your plan's history window).
-- Option B: point `DATABASE_URL` at the backup branch.
-- Any data written after the backup is lost. Under this plan only smoke-test data is written
-  before public access opens.
+**Restore** (only if data is damaged) **[approval]**: put the backend in maintenance mode or
+suspend it, then either restore the production branch to the pre-deploy timestamp
+(point-in-time restore, within your plan's history window) or point `DATABASE_URL` at the
+backup branch. Data written after the backup is lost; under this plan that's only
+smoke-test data.
 
-**Retention.** The backup branch contains personal data, including accounts later deleted
-through the app. Delete it once the release is verified (suggested: within 14 days).
+**Retention:** the backup branch contains personal data, including accounts later deleted in
+the app. Delete it once the release is verified (suggested within 14 days).
 
-## 4. Deployment sequence (public access restricted throughout)
+## 5. Deployment sequence (public access restricted throughout)
 
 | # | Step | Approval |
 |---|---|---|
-| 0 | Backend is **suspended** in Render (done). | — |
+| 0 | Backend **suspended** in Render (done). | — |
 | 1 | Review the preflight results together. | — |
-| 2 | Create the Neon backup branch (section 3). | **[approval]** |
-| 3 | In Render (still suspended), set environment variables: `MAINTENANCE_MODE=true`; `MAINTENANCE_BYPASS_KEY=<openssl rand -hex 32>`; rotate `JWT_SECRET` (section 6); remove `DDL_AUTO` (no longer read); keep `LOG_LEVEL` unset (INFO). | **[approval]** |
+| 2 | Create the Neon backup branch (section 4). | **[approval]** |
+| 3 | With the service still suspended, set env vars (section 3): `MAINTENANCE_MODE=true`, `MAINTENANCE_BYPASS_KEY`, rotated `JWT_SECRET`, `CLIENT_IP_MODE=UNKNOWN`, `CLIENT_IP_DIAGNOSTICS=true`, Flyway direct URL if needed; remove `DDL_AUTO`. | **[approval]** |
 | 4 | Merge the backend PR. | **[approval]** |
-| 5 | Resume the Render service. It builds the merged commit, Flyway applies V2–V4, and the app starts in maintenance mode: the public gets 503, `/health` returns ok. Confirm `Successfully applied 3 migrations` and no errors in the log. | **[approval]** |
-| 6 | Promote the owner's account (after verifying ownership): `UPDATE users SET role = 'ADMIN' WHERE user_id = <id> AND user_name = '<username>';` (expect `UPDATE 1`). Never promote `demo`. | **[approval]** |
-| 7 | Private smoke tests with the bypass header (section 5). | — |
-| 8 | Merge the frontend PR (Vercel deploys). | **[approval]** |
-| 9 | Set `MAINTENANCE_MODE=false` and remove `MAINTENANCE_BYPASS_KEY` (Render redeploys/restarts). | **[approval]** |
-| 10 | Public smoke tests through the UI (section 5). | — |
-| 11 | Re-enable the UserManager demo on the portfolio and profile README. | **[approval]** |
+| 5 | Resume the service. Check the log for `Successfully applied 3 migrations`, no errors; `/api/health` → `ok`; other endpoints → 503. | **[approval]** |
+| 6 | Verify client-IP resolution (section 6). | — |
+| 7 | Promote the owner's account: `UPDATE users SET role = 'ADMIN' WHERE user_id = <id> AND user_name = '<username>';` (expect `UPDATE 1`). Never `demo`. | **[approval]** |
+| 8 | Private smoke tests with `X-Maintenance-Key` (section 10). | — |
+| 9 | Merge the frontend PR (Vercel deploys; CSP and security headers take effect). | **[approval]** |
+| 10 | Set the final `CLIENT_IP_*` values, `CLIENT_IP_DIAGNOSTICS=false`, `MAINTENANCE_MODE=false`, delete `MAINTENANCE_BYPASS_KEY`. | **[approval]** |
+| 11 | Public smoke tests through the UI (section 10). | — |
+| 12 | Re-enable the UserManager demo on the portfolio and profile README. | **[approval]** |
 
-## 5. Smoke-test checklist
+## 6. Client-IP verification (step 6)
 
-API base: `https://<render-host>/api`. During maintenance, add `-H "X-Maintenance-Key: $KEY"`.
+Render passes traffic through its proxy (and Cloudflare). Its own forum indicates that
+`X-Forwarded-For` is appended to, not replaced, so the app never trusts it. Determine
+which single-value header Render sets reliably:
 
-**Private (step 7)**
-- [ ] `GET /health` → 200 `ok` (without the key).
-- [ ] `POST /user/login` without the key → 503.
-- [ ] Demo login with the key → 200, `Authorization` header present, body has `"role":"USER"` and no `password`.
-- [ ] Demo token: `GET /user/` → 403; `POST /user/update {"firstName":"x"}` → 403; `GET /posts/` → 200 with no emails or hashes in the body.
-- [ ] Owner (ADMIN) token: `GET /user/` → 200, includes `status`; `POST /user/{demoId}/deactivate` is **not** run.
-- [ ] Signup with `"userId":<existing id>,"role":"ADMIN"` → creates a new USER; the existing account is unchanged.
-- [ ] A token issued before the release → 401.
+1. Find your public IP: `curl -s https://api.ipify.org`.
+2. Send requests that try to spoof every candidate header:
+   ```bash
+   curl -s -o /dev/null -H "X-Maintenance-Key: $KEY" \
+     -H "X-Forwarded-For: 1.1.1.1" -H "CF-Connecting-IP: 2.2.2.2" \
+     -H "True-Client-IP: 3.3.3.3" -H "X-Real-IP: 4.4.4.4" \
+     https://<render-host>/api/user/get
+   ```
+3. In the Render log, find the `client-ip diagnostics:` line for that request.
+   - `remoteAddr` is the proxy peer. Confirm it falls inside `CLIENT_IP_TRUSTED_PROXIES`, or set that variable to the observed range.
+   - A usable header shows **your real IP**, not the spoofed value, as its **only** value.
+4. If one does (for example `CF-Connecting-IP`): `CLIENT_IP_MODE=TRUSTED_HEADER`,
+   `CLIENT_IP_HEADER=<that header>`. If none does, keep `CLIENT_IP_MODE=UNKNOWN`: per-IP limits
+   are replaced by global caps (login 600/15 min, signup 50/h, reset 100/h, verification
+   300/h), and per-account and per-user limits still apply.
+5. Turn diagnostics off afterwards (step 10).
 
-**Public (step 10, through the UI)**
-- [ ] Demo login works; no Admin link; profile edits show "can't be changed".
-- [ ] New signup → verification email → verify → login.
-- [ ] Password reset → works once → the same link again is rejected.
-- [ ] Change email → current address unchanged → confirm from the new inbox → updated.
-- [ ] Create post with image, comment, like/unlike, delete own post; another user's post can't be deleted.
-- [ ] Owner can deactivate and reactivate a test account; the deactivated account can't log in.
-- [ ] Render log shows no tokens, passwords, or request bodies.
+**Limits of per-instance rate limiting:** counters live in memory. They reset on every restart
+(the free Render instance sleeps and restarts often), and they are not shared if the service is
+ever scaled to more than one instance. They protect against bursts, not slow distributed
+abuse. A shared store (Redis or a database table) would be needed for stronger guarantees.
 
-## 6. Credential rotation
+## 7. Credential rotation
 
 **JWT_SECRET** (step 3, and on any suspicion of exposure) **[approval]**
-1. Generate: `openssl rand -base64 64` (≥ 32 bytes required, 64 recommended). Never commit it or paste it into chat or tickets.
-2. Render → service → Environment → update `JWT_SECRET` → save (triggers a redeploy).
-3. Effect: every existing session is signed out, and verification links already emailed stop working (users can request new ones). Password-reset links are unaffected (database tokens).
-4. Verify: a token captured before rotation → 401; a fresh login works.
-5. Store the new value only in Render and your password manager.
+1. Generate: `openssl rand -base64 64`. Never commit it or paste it into chat or tickets.
+2. Render → Environment → update `JWT_SECRET` (redeploys).
+3. Effect (tested in `AuthenticationIT.rotatingTheSigningSecretInvalidatesPreviouslyIssuedTokens`):
+   every token signed with the old secret is rejected, so all sessions are signed out and
+   emailed verification links stop working (users can request new ones). Password-reset links
+   are database tokens and unaffected.
+4. Verify: a pre-rotation token → 401; a fresh login works.
+5. Store the value only in Render and your password manager.
 
-Note: tokens issued by the old build are already rejected by this release (they lack the
-purpose claim), so rotation is defense in depth against an exposed secret, not the only
-protection against the logged tokens.
+Tokens issued by the old build are already rejected by this release (they lack the purpose
+claim). Rotation is defense in depth against an exposed secret.
 
-**Other credentials.** Rotate `DATABASE_PASSWORD` (Neon role reset) or `RESEND_API_KEY` only if
-there is evidence they were exposed; this release never logged them. Generate a new
-`MAINTENANCE_BYPASS_KEY` for each maintenance window and remove it afterwards.
+**Others:** rotate `DATABASE_PASSWORD` or `RESEND_API_KEY` only on evidence of exposure (this
+release never logs them). Use a new `MAINTENANCE_BYPASS_KEY` for each window and delete it after.
 
-## 7. Rollback without reopening the vulnerable backend
+## 8. Rollback without reopening the vulnerable backend
 
 | Situation | Action |
 |---|---|
-| Release misbehaves after opening | Set `MAINTENANCE_MODE=true` (immediate safe state), or suspend the service. Diagnose, then **fix forward** through a new PR (CI must pass). |
-| Migration fails on startup | Nothing was partially applied. Keep the service suspended or in maintenance, fix the cause (usually preflight checks 5–6), redeploy the same release. |
-| Data damaged | Maintenance mode, then restore from the Neon backup (section 3) **[approval]**. |
-| Frontend issue | Redeploy the previous Vercel deployment (the old frontend is not the vulnerable component), or fix forward. |
+| Release misbehaves after opening | `MAINTENANCE_MODE=true` (immediate safe state) or suspend; diagnose; fix forward through a new PR with green CI |
+| Migration fails on startup | Nothing partially applied; stay suspended or in maintenance; fix the cause (usually preflight 5/6 or B2/B3); redeploy the same release |
+| Data damaged | Maintenance mode, then Neon restore (section 4) **[approval]** |
+| Frontend problem (e.g. a CSP block) | Redeploy the previous Vercel deployment (the old frontend is not the vulnerable part) or fix forward |
 
-Do not use Render's "Deploy a specific commit" with any commit earlier than the merge of the
-security PR.
+Never use Render's "Deploy a specific commit" with any commit earlier than the security merge.
 
-## 8. Incident assessment (production logs and data)
+## 9. Incident assessment (production logs and data)
 
 Before this release, production logged at DEBUG:
 - the JWT filter logged full `Authorization` headers (access tokens, valid 24h);
-- Spring MVC logged request bodies (truncated to about 100 characters):
-  **`POST /user/reset` bodies, which start with the new password in plain text** (followed by
-  part of the reset token). Login/signup/update bodies were logged as `User` objects, whose
-  `toString()` excluded the password.
+- Spring MVC logged request bodies (truncated to about 100 characters): **`POST /user/reset` bodies, which
+  start with the new password in plain text** (followed by part of the reset token).
+  Login/signup/update bodies were logged as `User` objects, whose `toString()` excluded the password.
 
-Also, any logged-in user could read every account's bcrypt hash, email and phone, and delete
+Any logged-in user could also read every account's bcrypt hash, email and phone, and delete
 users and posts.
 
-Assessment steps:
-1. Render → Logs: note the retention period available on the plan. Search for `/user/reset`,
+Steps:
+1. Render → Logs: note the plan's retention period. Search `/user/reset`,
    `Read "application/json`, `Auth Header`, `deleteUserById`, `DELETE /api/user`,
    `DELETE /api/posts`, `signup()`.
-2. List the accounts whose reset bodies appear. Those passwords are exposed in plain text;
-   ask the owners to change them (and anywhere they reused them).
-3. Run preflight queries 8–9 and compare with expected activity.
-4. If Render allows it, delete the affected logs; otherwise record that they expire with
-   the plan's retention window. Check any log streams or drains for copies.
+2. List the accounts with logged reset bodies. Those passwords are exposed; owners should change
+   them (and wherever they reused them).
+3. Review preflight queries 8–9.
+4. Delete the affected logs if Render allows it; otherwise record that they expire with the
+   retention window. Check any log streams or drains.
 5. Treat all bcrypt hashes as exposed: owners of real accounts should change passwords.
-6. Record findings and dates in an incident note.
+6. Record the findings and dates.
 
-## 9. Remaining risks after deployment
+## 10. Smoke tests
+
+API base `https://<render-host>/api`; during maintenance add `-H "X-Maintenance-Key: $KEY"`.
+
+**Private (step 8)**
+- [ ] `GET /health` → 200 without the key; `POST /user/login` without the key → 503.
+- [ ] Demo login → 200, `"role":"USER"`, no `password` in the body.
+- [ ] Demo token: `GET /user/` → 403; `POST /user/update {"firstName":"x"}` → 403; `GET /posts/` → no emails or hashes.
+- [ ] Owner token: `GET /user/` → 200 with `status`; `POST /admin/demo-content/cleanup` → 200 with counts.
+- [ ] Signup with `"userId":<existing>,"role":"ADMIN"` → new USER; the existing account is unchanged.
+- [ ] A token from before the release (or before rotation) → 401.
+- [ ] The `client-ip diagnostics` line is present (section 6).
+
+**Public (step 11, UI)**
+- [ ] Demo login works; no Admin link; profile edits show "can't be changed".
+- [ ] Signup → verification email → verify → login.
+- [ ] Password reset works once; reusing the link is rejected.
+- [ ] Email change requires the current password; the old address stays until confirmed from the new inbox.
+- [ ] Post with image, comment, like/unlike, delete own post; another user's post can't be deleted.
+- [ ] Owner can deactivate/reactivate a test account; delete a test account → its posts show "Deleted user" and "[deleted]".
+- [ ] Browser console shows no CSP violations; response headers include `Content-Security-Policy`.
+- [ ] Render log contains no tokens, passwords, request bodies or the bypass key.
+
+## 11. Remaining risks after deployment
 
 | Risk | Severity | Mitigation / next step |
 |---|---|---|
-| Plain-text reset passwords and access tokens in historical Render logs | **High** until assessed | Section 8; tokens are already invalid after deploy |
-| Previously exposed bcrypt hashes (offline cracking of weak passwords) | **Medium** | Password changes for real accounts |
-| Access tokens in localStorage, 24h lifetime (XSS would expose them) | **Medium** | `docs/security-review.md`: shorter lifetime now, cookie-based sessions as a separate proposal |
-| In-memory rate limiting (single instance; if the proxy IP isn't resolved, per-IP limits become global) | **Medium** | Per-account limits don't depend on IP; verify client IPs in logs after deploy; shared store if scaled out |
-| Demo visitors can post content visible to all users until the next restart | **Low** | Content rate limits; demo content cleared on every boot; admin can deactivate the demo account |
-| Likes are not tracked per user (counts can be inflated) | **Low** | Per-user like table in a later release |
-| Signup reveals whether a username or email is taken | **Low** | Accepted UX trade-off; rate-limited |
-| Backend container runs as root | **Low** | Add a non-root `USER` to the Dockerfile |
-| Neon backup branch retains personal data | **Low** | Delete after verification (section 3) |
+| Plain-text reset passwords and access tokens in historical Render logs | **High** until assessed | Section 9; old tokens are already invalid |
+| Previously exposed bcrypt hashes | **Medium** | Password changes for real accounts |
+| Tokens in localStorage (XSS) | **Medium → Low-Medium** | CSP now enforced; 4h lifetime recommended; cookie sessions as a separate proposal |
+| Per-instance, in-memory rate limiting; client IP may stay `UNKNOWN` | **Medium** | Global caps + per-account limits; shared store if scaled out |
+| Demo visitors' content visible until cleanup | **Low** | Rate limits; admin cleanup; optional schedule; admin can deactivate `demo` |
+| Text other users wrote that mentions a deleted user | **Low** | Can't be detected automatically; admins remove it on request |
+| Likes not tracked per user | **Low** | Per-user like table later |
+| Signup reveals whether a username or email is taken | **Low** | Accepted; rate-limited |
+| Backend container runs as root | **Low** | Non-root `USER` in the Dockerfile |
+| Neon backup branch retains personal data | **Low** | Delete after verification |
