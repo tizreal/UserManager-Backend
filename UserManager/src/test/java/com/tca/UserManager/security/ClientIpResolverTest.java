@@ -86,4 +86,14 @@ class ClientIpResolverTest {
 		// A known client is limited separately
 		limiter.checkClient(RateLimiter.Rule.SIGNUP_PER_IP, RateLimiter.Rule.SIGNUP_GLOBAL, "203.0.113.9");
 	}
+
+	@Test
+	void endpointsWithoutAGlobalRuleAreNeverCappedForEveryone() {
+		// Login/verify/reset-submit pass no global rule: a flood from unknown clients cannot
+		// lock out all visitors (per-account limits and unguessable tokens protect them).
+		RateLimiter limiter = new RateLimiter(true);
+		for (int i = 0; i < 5_000; i++) {
+			limiter.checkClient(RateLimiter.Rule.LOGIN_PER_IP, null, null);
+		}
+	}
 }

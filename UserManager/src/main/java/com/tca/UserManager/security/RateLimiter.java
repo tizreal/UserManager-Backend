@@ -6,6 +6,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -27,17 +29,16 @@ public class RateLimiter {
 
 	public enum Rule {
 		LOGIN_PER_IP(30, Duration.ofMinutes(15)),
-		LOGIN_GLOBAL(600, Duration.ofMinutes(15)),
 		LOGIN_PER_ACCOUNT(10, Duration.ofMinutes(15)),
 		SIGNUP_PER_IP(5, Duration.ofHours(1)),
+		// Global caps exist only for endpoints that send email (cost/quota protection).
+		// They are used only when the client IP is unknown; see checkClient().
 		SIGNUP_GLOBAL(50, Duration.ofHours(1)),
 		RESET_REQUEST_PER_IP(10, Duration.ofHours(1)),
 		RESET_REQUEST_GLOBAL(100, Duration.ofHours(1)),
 		RESET_REQUEST_PER_ACCOUNT(3, Duration.ofHours(1)),
 		RESET_SUBMIT_PER_IP(10, Duration.ofHours(1)),
-		RESET_SUBMIT_GLOBAL(100, Duration.ofHours(1)),
 		VERIFY_EMAIL_PER_IP(20, Duration.ofHours(1)),
-		VERIFY_EMAIL_GLOBAL(300, Duration.ofHours(1)),
 		CURRENT_PASSWORD_PER_USER(10, Duration.ofMinutes(15)),
 		POST_PER_USER(20, Duration.ofHours(1)),
 		COMMENT_PER_USER(60, Duration.ofHours(1)),
@@ -54,6 +55,8 @@ public class RateLimiter {
 
 	private record Window(long startMillis, int count) {
 	}
+
+	private static final Logger logger = LoggerFactory.getLogger(RateLimiter.class);
 
 	private final Map<String, Window> windows = new ConcurrentHashMap<>();
 	private final boolean enabled;
@@ -86,14 +89,22 @@ public class RateLimiter {
 	}
 
 	/**
-	 * Per-client limit when the client IP is known; otherwise (null, see ClientIpResolver)
-	 * a coarse global limit, so spoofable headers never decide who gets throttled.
+	 * Per-client limit when the client IP is known. When it is unknown (null, see
+	 * ClientIpResolver) a global limit applies only if {@code global} is non-null: that is
+	 * reserved for email-sending endpoints, because a global cap is shared by every visitor
+	 * and could otherwise be used to lock everyone out. Endpoints protected by per-account
+	 * limits or unguessable tokens pass null and are not globally capped.
 	 */
 	public void checkClient(Rule perIp, Rule global, String clientIpOrNull) {
 		if (clientIpOrNull != null) {
 			check(perIp, clientIpOrNull);
-		} else {
-			check(global, "all-clients");
+		} else if (global != null) {
+			try {
+				check(global, "all-clients");
+			} catch (RateLimitedException e) {
+				logger.warn("Global rate limit {} reached; configure CLIENT_IP_MODE so per-IP limits apply", global);
+				throw e;
+			}
 		}
 	}
 

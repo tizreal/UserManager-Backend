@@ -47,6 +47,14 @@ token a long window.
 
 **Recommended configuration (no code change):** `JWT_EXPIRATION=14400000` (4h).
 
+**Remaining, separate risk: token theft from localStorage.** Even with the CSP and a 4-hour
+lifetime, any script that runs on the frontend's origin can read the token. That includes an
+XSS bug the CSP doesn't stop, a compromised npm dependency shipped in the bundle, or a malicious
+browser extension. The token can then be used from anywhere until it expires, the password
+changes, or the account is deactivated. The CSP reduces the chance and the shorter lifetime
+reduces the window; neither removes the risk. Removing it requires the cookie-based session
+design below.
+
 **Separate proposal (not implemented).** Move to an `HttpOnly; Secure; SameSite` cookie
 session: a short access token plus a rotating refresh token stored server-side, with CSRF
 protection (custom header or double-submit token), since the frontend (Vercel) and API (Render)
@@ -59,9 +67,9 @@ In-memory fixed windows (`RateLimiter`), returning 429 with `Retry-After`:
 
 | Action | Limit |
 |---|---|
-| Login | 30 / 15 min per IP; 10 / 15 min per username |
-| Signup | 5 / hour per IP |
-| Password-reset email | 10 / hour per IP; 3 / hour per address |
+| Login | 30 / 15 min per IP (when known); 10 / 15 min per username |
+| Signup | 5 / hour per IP, or 50 / hour shared when the IP is unknown |
+| Password-reset email | 10 / hour per IP, or 100 / hour shared when the IP is unknown; 3 / hour per address |
 | Password-reset submit | 10 / hour per IP |
 | Email verification | 20 / hour per IP |
 | Current-password checks (password/email change, self-delete) | 10 / 15 min per user |
@@ -72,6 +80,11 @@ client-supplied value, so it can be forged). Modes: `UNKNOWN` (default: no heade
 per-IP rules fall back to global caps), `TRUSTED_HEADER` (one single-value header, honored only
 when the TCP peer is inside `CLIENT_IP_TRUSTED_PROXIES`), `REMOTE_ADDR` (no proxy). The right
 header is verified empirically during the maintenance window (runbook §6).
+
+When the client IP is unknown, only email-sending endpoints (signup, reset request) fall
+back to a shared global cap, to bound email cost. Login, verification and reset submission
+have no shared cap, because one would let a single attacker lock out every visitor; they rely
+on per-account limits and unguessable tokens instead.
 
 Limitations: counters are in memory, so they reset on restart and aren't shared across
 instances. This stops bursts, not slow distributed abuse.

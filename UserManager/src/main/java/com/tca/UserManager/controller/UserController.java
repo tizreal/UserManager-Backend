@@ -54,7 +54,7 @@ public class UserController {
 		this.clientIpResolver = clientIpResolver;
 	}
 
-	/** Per-IP limit when the client IP is trustworthy, otherwise a global limit. */
+	/** Per-IP limit when the client IP is trustworthy; otherwise the global rule, if any (see RateLimiter). */
 	private void limitClient(Rule perIp, Rule global, HttpServletRequest http) {
 		rateLimiter.checkClient(perIp, global, clientIpResolver.resolve(http));
 	}
@@ -71,7 +71,7 @@ public class UserController {
 	@GetMapping("/verify/email")
 	public void verifyEmail(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
 			HttpServletRequest http) {
-		limitClient(Rule.VERIFY_EMAIL_PER_IP, Rule.VERIFY_EMAIL_GLOBAL, http);
+		limitClient(Rule.VERIFY_EMAIL_PER_IP, null, http); // token-protected: no global cap
 		if (authorization == null || !authorization.startsWith("Bearer ")) {
 			throw new InvalidTokenException("This verification link is invalid or has expired");
 		}
@@ -80,7 +80,7 @@ public class UserController {
 
 	@PostMapping("/login")
 	public ResponseEntity<UserResponse> login(@Valid @RequestBody LoginRequest request, HttpServletRequest http) {
-		limitClient(Rule.LOGIN_PER_IP, Rule.LOGIN_GLOBAL, http);
+		limitClient(Rule.LOGIN_PER_IP, null, http); // per-account limit below: no global cap
 		rateLimiter.check(Rule.LOGIN_PER_ACCOUNT, request.username().trim());
 		UserService.LoginResult result = userService.login(request);
 		return new ResponseEntity<>(result.user(), userService.tokenHeader(result.accessToken()), OK);
@@ -96,7 +96,7 @@ public class UserController {
 
 	@PostMapping("/reset")
 	public void resetPassword(@Valid @RequestBody ResetPasswordRequest request, HttpServletRequest http) {
-		limitClient(Rule.RESET_SUBMIT_PER_IP, Rule.RESET_SUBMIT_GLOBAL, http);
+		limitClient(Rule.RESET_SUBMIT_PER_IP, null, http); // 256-bit single-use token: no global cap
 		passwordResetService.resetPassword(request.token(), request.password());
 	}
 

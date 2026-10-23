@@ -29,7 +29,12 @@ Run `docs/preflight.sql` in the Neon SQL editor. Run section B **as the role the
 | B1 Session role | = `DATABASE_USERNAME` | Re-run section B as that role |
 | B2 Table owners | = app role | `ALTER TABLE` would fail: transfer ownership or migrate as the owner **[approval]** |
 | B3 `public` privileges | `CREATE`, `USAGE` = true | Grant, or migrate as the owner **[approval]** |
-| B5 Pooler | `DATABASE_URL` host without `-pooler` | Set `SPRING_FLYWAY_URL` (+ `_USER`, `_PASSWORD`) to the direct endpoint |
+| B5 Pooler | `DATABASE_URL` host without `-pooler` | Set `SPRING_FLYWAY_URL` (+ `_USER`, `_PASSWORD`) to the direct endpoint (honored; tested in `FlywaySeparateConnectionIT`) |
+
+If Flyway runs as a different role from the application (B1 ≠ B2 owner), the application
+role also needs `SELECT, INSERT, UPDATE, DELETE` on the new `password_reset_tokens` table and
+`USAGE` on its identity sequence after V3 **[approval]**. On Neon the application normally
+connects as the owner, in which case nothing is needed.
 
 ## 2. How Flyway will behave on production (tested in `MigrationIT`)
 
@@ -62,7 +67,7 @@ Migrations are forward-only. The database rollback path is the Neon backup (sect
 | `JWT_EXPIRATION` | No (default 86400000 = 24h) | Recommended `14400000` (4h); see `docs/security-review.md` |
 | `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD` | As today | Unchanged |
 | `CLIENT_URL` | Yes | Unchanged (frontend URL, used in email links) |
-| `APP_SEED_DEMO`, `DEMO_PASSWORD`, `DEMO_USERNAME` | As today | Unchanged |
+| `APP_SEED_DEMO`, `DEMO_PASSWORD`, `DEMO_USERNAME` | As today | Unchanged. The seeder flag is `@Value("${app.seed-demo:false}")`: **`APP_SEED_DEMO=true`** (or `app_seed_demo`) enables it; look-alikes such as `APP_SEEDDEMO` or `SEED_DEMO` silently do nothing (tested in `SeedDemoPropertyResolutionTest`). Confirm which name Render uses. |
 | `DEMO_CONTENT_RETENTION`, `DEMO_CLEANUP_CRON` | No | Defaults `PT24H` / `-` (schedule off). Optional: `0 0 * * * *` (hourly) |
 | `MAINTENANCE_MODE`, `MAINTENANCE_BYPASS_KEY` | During rollout | `true` + `openssl rand -hex 32` **[approval]** |
 | `CLIENT_IP_MODE`, `CLIENT_IP_HEADER`, `CLIENT_IP_TRUSTED_PROXIES`, `CLIENT_IP_DIAGNOSTICS` | No | Start `UNKNOWN` + diagnostics `true` during the window; then per section 6 |
@@ -126,9 +131,16 @@ which single-value header Render sets reliably:
    - `remoteAddr` is the proxy peer. Confirm it falls inside `CLIENT_IP_TRUSTED_PROXIES`, or set that variable to the observed range.
    - A usable header shows **your real IP**, not the spoofed value, as its **only** value.
 4. If one does (for example `CF-Connecting-IP`): `CLIENT_IP_MODE=TRUSTED_HEADER`,
-   `CLIENT_IP_HEADER=<that header>`. If none does, keep `CLIENT_IP_MODE=UNKNOWN`: per-IP limits
-   are replaced by global caps (login 600/15 min, signup 50/h, reset 100/h, verification
-   300/h), and per-account and per-user limits still apply.
+   `CLIENT_IP_HEADER=<that header>`. If none does, keep `CLIENT_IP_MODE=UNKNOWN`. Then:
+   - Login, email verification and reset submission get **no** IP-based limit. Per-account
+     login limits, signed verification tokens and 256-bit single-use reset tokens protect them,
+     and a shared cap would let one attacker lock every visitor out.
+   - Only the endpoints that **send email** fall back to a shared cap: signup 50/h and
+     password-reset requests 100/h. This bounds email cost and quota. A flood can temporarily
+     block *new* signups and reset emails for everyone, but not logins or use of the app.
+     Each trip logs a warning.
+   - Per-account and per-user limits (login 10/15 min per username, reset 3/h per address,
+     content creation) always apply.
 5. Turn diagnostics off afterwards (step 10).
 
 **Limits of per-instance rate limiting:** counters live in memory. They reset on every restart
@@ -217,7 +229,9 @@ API base `https://<render-host>/api`; during maintenance add `-H "X-Maintenance-
 |---|---|---|
 | Plain-text reset passwords and access tokens in historical Render logs | **High** until assessed | Section 9; old tokens are already invalid |
 | Previously exposed bcrypt hashes | **Medium** | Password changes for real accounts |
-| Tokens in localStorage (XSS) | **Medium → Low-Medium** | CSP now enforced; 4h lifetime recommended; cookie sessions as a separate proposal |
+| Access token stored in localStorage | **Medium** (separate, accepted risk) | Any script running on the frontend origin (an XSS bug the CSP misses, a compromised dependency in the bundle, a malicious browser extension) can read the token and use it until it expires or the session is revoked. CSP and a 4h lifetime reduce, not remove, this. Fix: cookie-based sessions (separate proposal) |
+| Shared caps on email-sending endpoints while `CLIENT_IP_MODE=UNKNOWN` | **Low-Medium** | A flood can pause new signups/reset emails for up to an hour; logins unaffected. Resolve by verifying a trusted header (§6) |
+| Per-account login limit | **Low** | An attacker can deliberately lock one known username out for 15 minutes; standard trade-off against password guessing |
 | Per-instance, in-memory rate limiting; client IP may stay `UNKNOWN` | **Medium** | Global caps + per-account limits; shared store if scaled out |
 | Demo visitors' content visible until cleanup | **Low** | Rate limits; admin cleanup; optional schedule; admin can deactivate `demo` |
 | Text other users wrote that mentions a deleted user | **Low** | Can't be detected automatically; admins remove it on request |
