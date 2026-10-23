@@ -2,6 +2,8 @@ package com.tca.UserManager.entity;
 
 import java.io.Serializable;
 import java.sql.Timestamp;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import jakarta.persistence.*;
 
 @Entity // Marks this class as a JPA entity (database table)
@@ -24,6 +26,9 @@ public class User implements Serializable {
 	@Column(name = "user_name")
 	private String username;
 
+	// Entities are never returned by the API (DTOs are), but keep the hash out of
+	// any accidental serialization as well.
+	@JsonIgnore
 	@Column(name = "password")
 	private String password;
 
@@ -44,6 +49,15 @@ public class User implements Serializable {
 
 	@Column(name = "updated_at")
 	private Timestamp updatedAt;
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "role", nullable = false, length = 20)
+	private Role role = Role.USER;
+
+	// Bumped to invalidate every access token issued before the change.
+	@JsonIgnore
+	@Column(name = "token_version", nullable = false)
+	private int tokenVersion = 0;
 
 	// Default constructor required by JPA
 	public User() {
@@ -137,6 +151,22 @@ public class User implements Serializable {
 
 	public void setUpdatedAt(Timestamp updatedAt) {
 		this.updatedAt = updatedAt;
+	}
+
+	public Role getRole() {
+		return role;
+	}
+
+	public void setRole(Role role) {
+		this.role = role;
+	}
+
+	public int getTokenVersion() {
+		return tokenVersion;
+	}
+
+	public void incrementTokenVersion() {
+		this.tokenVersion++;
 	}
 
 	@Override
