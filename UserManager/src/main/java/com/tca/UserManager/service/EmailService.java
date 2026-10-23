@@ -15,7 +15,6 @@ import org.thymeleaf.context.Context;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tca.UserManager.entity.User;
 import com.tca.UserManager.provider.ResourceProvider;
-import com.tca.UserManager.security.JwtService;
 
 @Service
 public class EmailService {
@@ -29,8 +28,6 @@ public class EmailService {
 	private String emailFrom; // e.g. "TCA User Manager <onboarding@resend.dev>"
 
 	@Autowired
-	JwtService jwtService;
-	@Autowired
 	ResourceProvider provider;
 	@Autowired
 	TemplateEngine templateEngine;
@@ -38,30 +35,32 @@ public class EmailService {
 	private final HttpClient httpClient = HttpClient.newHttpClient();
 	private final ObjectMapper objectMapper = new ObjectMapper();
 
+	// Tokens are created by the caller (UserService / PasswordResetService) and are
+	// only placed in the email body. They are never logged.
 	@Async
-	public void sendVerificationEmail(User user) {
+	public void sendVerificationEmail(User user, String token) {
 		this.sendEmail(user, this.provider.getClientVerifyParam(),
 				"verify_email",
 				String.format("Welcome %s %s", user.getFirstName(), user.getLastName()),
-				this.provider.getClientVerifyExpiration()
+				token
 		);
 	}
 
 	@Async
-	public void sendResetPasswordEmail(User user) {
+	public void sendResetPasswordEmail(User user, String token) {
 		this.sendEmail(user, this.provider.getClientResetParam(),
-				"reset_password", "Reset your password", this.provider.getClientResetExpiration()
+				"reset_password", "Reset your password", token
 		);
 	}
 
-	private void sendEmail(User user, String clientParam, String templateName, String subject, long expiration) {
+	private void sendEmail(User user, String clientParam, String templateName, String subject, String token) {
 		try {
 			// 1. Build the Thymeleaf context
 			Context context = new Context();
 			context.setVariable("user", user);
 			context.setVariable("client", this.provider.getClientUrl());
 			context.setVariable("param", clientParam);
-			context.setVariable("token", this.jwtService.generateJwtToken(user.getUsername(), expiration));
+			context.setVariable("token", token);
 
 			// 2. Process the HTML template
 			String htmlContent = this.templateEngine.process(templateName, context);
@@ -86,13 +85,13 @@ public class EmailService {
 			HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
 			if (response.statusCode() >= 200 && response.statusCode() < 300) {
-				logger.debug("Email sent to: {}", user.getEmail());
+				logger.debug("Sent {} email", templateName);
 			} else {
-				logger.error("Resend API error ({}): {}", response.statusCode(), response.body());
+				logger.error("Resend API error ({}) sending {} email", response.statusCode(), templateName);
 			}
 
 		} catch (Exception ex) {
-			logger.error("Error sending email to: " + user.getEmail(), ex);
+			logger.error("Error sending {} email: {}", templateName, ex.getClass().getSimpleName());
 		}
 	}
 }

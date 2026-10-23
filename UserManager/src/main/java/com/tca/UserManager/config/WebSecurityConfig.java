@@ -1,7 +1,12 @@
 package com.tca.UserManager.config;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.*;
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -15,76 +20,83 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.servlet.HandlerExceptionResolver;
+
 import com.tca.UserManager.filter.CustomAuthEntryPoint;
 import com.tca.UserManager.filter.JwtAuthorizationFilter;
-import com.tca.UserManager.provider.ResourceProvider;
-import com.tca.UserManager.security.CustomUserDetailsService;
 
-import java.util.List;
-
+/**
+ * URL-level access rules. Paths are relative to the /api context path.
+ * Admin-only operations are also guarded with @PreAuthorize on the controller methods,
+ * and ownership rules (e.g. deleting a post) are enforced in the service layer.
+ */
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
 public class WebSecurityConfig {
 
-    @Autowired
-    JwtAuthorizationFilter jwtAuthorizationFilter;
-    @Autowired
-    CustomAuthEntryPoint customAuthEntryPoint;
-    @Autowired
-    ResourceProvider provider;
+	private final JwtAuthorizationFilter jwtAuthorizationFilter;
+	private final CustomAuthEntryPoint authEntryPoint;
+	private final HandlerExceptionResolver resolver;
+	private final List<String> allowedOrigins;
 
-    private final CustomUserDetailsService userDetailsService;
+	public WebSecurityConfig(JwtAuthorizationFilter jwtAuthorizationFilter, CustomAuthEntryPoint authEntryPoint,
+			@Qualifier("handlerExceptionResolver") HandlerExceptionResolver resolver,
+			@Value("${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000,https://usermanager-frontend.vercel.app}") List<String> allowedOrigins) {
+		this.jwtAuthorizationFilter = jwtAuthorizationFilter;
+		this.authEntryPoint = authEntryPoint;
+		this.resolver = resolver;
+		this.allowedOrigins = allowedOrigins;
+	}
 
-    public WebSecurityConfig(JwtAuthorizationFilter jwtFilter,
-                             CustomUserDetailsService userDetailsService) {
-        this.userDetailsService = userDetailsService;
-    }
+	@Bean
+	public CorsConfigurationSource corsConfigurationSource() {
+		CorsConfiguration configuration = new CorsConfiguration();
+		configuration.setAllowedOrigins(allowedOrigins);
+		configuration.setAllowedMethods(List.of("GET", "POST", "DELETE", "OPTIONS"));
+		configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+		configuration.setExposedHeaders(List.of("Authorization"));
+		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+		source.registerCorsConfiguration("/**", configuration);
+		return source;
+	}
 
-    @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of(
-        	    "http://localhost:5173",
-        	    "http://localhost:3000",
-        	    "https://usermanager-frontend.vercel.app"
-        	));
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("*"));
-        configuration.setAllowCredentials(true);
-        configuration.setExposedHeaders(List.of("Authorization")); // ← add this line
+	@Bean
+	SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+		http
+			.cors(cors -> cors.configurationSource(corsConfigurationSource()))
+			// Tokens travel in the Authorization header, not cookies, so CSRF does not apply.
+			.csrf(csrf -> csrf.disable())
+			.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+			.authorizeHttpRequests(auth -> auth
+				.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+				// Public: account creation and recovery, health, error page
+				.requestMatchers(HttpMethod.POST, "/user/login", "/user/signup", "/user/reset").permitAll()
+				.requestMatchers(HttpMethod.GET, "/user/reset/*", "/user/verify/email", "/health").permitAll()
+				.requestMatchers("/error").permitAll()
+				// Own account (must come before the admin patterns below)
+				.requestMatchers(HttpMethod.GET, "/user/get").authenticated()
+				.requestMatchers(HttpMethod.POST, "/user/update").authenticated()
+				// Admin only: listing, looking up, and deleting other accounts
+				.requestMatchers(HttpMethod.GET, "/user/", "/user/*").hasRole("ADMIN")
+				.requestMatchers(HttpMethod.DELETE, "/user/*").hasRole("ADMIN")
+				// Everything else (posts, comments) requires a logged-in user
+				.anyRequest().authenticated())
+			.exceptionHandling(ex -> ex
+				.authenticationEntryPoint(authEntryPoint)
+				.accessDeniedHandler((req, res, e) -> resolver.resolveException(req, res, null, e)))
+			.addFilterBefore(jwtAuthorizationFilter, UsernamePasswordAuthenticationFilter.class);
 
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", configuration);
-        return source;
-    }
+		return http.build();
+	}
 
-    @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-        http
-            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-            .csrf(csrf -> csrf.disable())
-            .sessionManagement(session ->
-                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers(this.provider.getJwtExcludedUrls()).permitAll()
-                .anyRequest().authenticated())
-            .exceptionHandling(ex ->
-                ex.authenticationEntryPoint(this.customAuthEntryPoint))
-            .addFilterBefore(this.jwtAuthorizationFilter,
-                UsernamePasswordAuthenticationFilter.class);
+	@Bean
+	public PasswordEncoder passwordEncoder() {
+		return new BCryptPasswordEncoder();
+	}
 
-        return http.build();
-    }
-
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
-
-    @Bean
-    public AuthenticationManager authenticationManager(AuthenticationConfiguration config)
-            throws Exception {
-        return config.getAuthenticationManager();
-    }
+	@Bean
+	public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
+		return config.getAuthenticationManager();
+	}
 }

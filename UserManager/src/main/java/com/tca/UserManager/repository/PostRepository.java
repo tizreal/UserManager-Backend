@@ -11,4 +11,6 @@ public interface PostRepository extends JpaRepository<Post, Long> {
 
     // Returns all posts newest-first
     List<Post> findAllByOrderByCreatedAtDesc();
+
+    boolean existsByUserUserId(Integer userId);
 }

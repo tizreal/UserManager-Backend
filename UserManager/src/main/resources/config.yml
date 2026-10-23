@@ -6,27 +6,14 @@ app:
       refresh-expiration: 604800000
       issuer: 'BFN-TCA Bootcamp'
       audience: User Manager
-      prefix: 'Bearer '
-      excluded:
-        urls: /user/login,/user/signup,/user/reset/*,/user/verify/email,/test/**,/error,/health
+  # The shared public demo login. It is a normal USER whose credentials and profile
+  # cannot be changed and which cannot request password resets.
+  demo:
+    username: ${DEMO_USERNAME:demo}
   mail:
     from: "noreply@usermanager.com"
     verification-subject: "Verify your email address"
     reset-password-subject: "Reset your password"
-  cors:
-    allowed-origins:
-      - ${CLIENT_URL:http://localhost:5173}
-      
-    allowed-methods:
-      - GET
-      - POST
-      - PUT
-      - DELETE
-      - OPTIONS
-    allowed-headers:
-      - "*"
-    allow-credentials: true
-    max-age: 3600
 
 client:
   url: ${CLIENT_URL:http://localhost:5173}

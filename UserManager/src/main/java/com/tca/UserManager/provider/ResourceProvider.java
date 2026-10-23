@@ -21,11 +21,7 @@ public class ResourceProvider {
 	@Value("${app.security.jwt.audience}")
 	private String jwtAudience;
 
-	@Value("${app.security.jwt.prefix}")
-	private String jwtPrefix;
 
-	@Value("${app.security.jwt.excluded.urls}")
-	private String[] jwtExcludedUrls;
 
 	@Value("${client.url}")
 	private String clientUrl;
@@ -42,6 +38,8 @@ public class ResourceProvider {
 
 	@Value("${client.email.reset.expiration}")
 	private long clientResetExpiration;
+
+
 
 	// Getters
 	public String getJwtSecret() {
@@ -60,13 +58,7 @@ public class ResourceProvider {
 		return jwtAudience;
 	}
 
-	public String getJwtPrefix() {
-		return jwtPrefix;
-	}
 
-	public String[] getJwtExcludedUrls() {
-		return jwtExcludedUrls;
-	}
 
 	public String getClientUrl() {
 		return clientUrl;
@@ -87,4 +79,6 @@ public class ResourceProvider {
 	public long getClientResetExpiration() {
 		return clientResetExpiration;
 	}
+
+
 }

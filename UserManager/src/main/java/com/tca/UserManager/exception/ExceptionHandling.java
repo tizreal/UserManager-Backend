@@ -15,6 +15,10 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException; 
 import org.springframework.web.HttpRequestMethodNotSupportedException; 
 import java.util.Objects; 
+import java.util.stream.Collectors;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
  
 @RestController 
 @RestControllerAdvice  // Catches exceptions from ALL controllers in one place 
@@ -66,10 +70,52 @@ status.getReasonPhrase().toUpperCase(), msg),
         return createHttpResponse(FORBIDDEN, NOT_ENOUGH_PERMISSION); 
     } 
  
+    // Missing or invalid credentials on a protected endpoint is 401, not 403.
     @ExceptionHandler(AuthenticationException.class) 
     public ResponseEntity<HttpResponse> authenticationException() { 
-        return createHttpResponse(FORBIDDEN, NOT_AUTHENTICATED); 
+        return createHttpResponse(UNAUTHORIZED, NOT_AUTHENTICATED); 
     } 
+
+    @ExceptionHandler(ForbiddenActionException.class)
+    public ResponseEntity<HttpResponse> forbiddenActionException(ForbiddenActionException ex) {
+        return createHttpResponse(FORBIDDEN, ex.getMessage());
+    }
+
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<HttpResponse> resourceNotFoundException(ResourceNotFoundException ex) {
+        return createHttpResponse(NOT_FOUND, ex.getMessage());
+    }
+
+    @ExceptionHandler(ConflictException.class)
+    public ResponseEntity<HttpResponse> conflictException(ConflictException ex) {
+        return createHttpResponse(CONFLICT, ex.getMessage());
+    }
+
+    @ExceptionHandler(InvalidTokenException.class)
+    public ResponseEntity<HttpResponse> invalidTokenException(InvalidTokenException ex) {
+        return createHttpResponse(BAD_REQUEST, ex.getMessage());
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<HttpResponse> validationException(MethodArgumentNotValidException ex) {
+        String details = ex.getBindingResult().getFieldErrors().stream()
+                .map(e -> e.getField() + " " + e.getDefaultMessage())
+                .sorted()
+                .collect(Collectors.joining("; "));
+        return createHttpResponse(BAD_REQUEST, details);
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<HttpResponse> unreadableBody() {
+        return createHttpResponse(BAD_REQUEST, "Malformed request body");
+    }
+
+    // Unique-index violations (e.g. two concurrent signups with the same username).
+    // The message is generic so database details are not exposed.
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<HttpResponse> dataIntegrityViolation() {
+        return createHttpResponse(CONFLICT, "The request conflicts with existing data");
+    }
  
     @ExceptionHandler(LockedException.class) 
     public ResponseEntity<HttpResponse> lockedException() { 

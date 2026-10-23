@@ -1,52 +1,49 @@
 package com.tca.UserManager.service;
 
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.tca.UserManager.dto.CommentResponse;
+import com.tca.UserManager.dto.CreateCommentRequest;
 import com.tca.UserManager.entity.Comment;
 import com.tca.UserManager.entity.Post;
-import com.tca.UserManager.entity.User;
+import com.tca.UserManager.exception.domain.ResourceNotFoundException;
 import com.tca.UserManager.repository.CommentRepository;
 import com.tca.UserManager.repository.PostRepository;
 import com.tca.UserManager.repository.UserRepository;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.stereotype.Service;
-
-import java.util.List;
+import com.tca.UserManager.security.CurrentUser;
 
 @Service
 public class CommentService {
 
-    @Autowired
-    private CommentRepository commentRepository;
+    private final CommentRepository commentRepository;
+    private final PostRepository postRepository;
+    private final UserRepository userRepository;
 
-    @Autowired
-    private PostRepository postRepository;
-
-    @Autowired
-    private UserRepository userRepository;
-
-    /**
-     * Saves a comment.
-     * Frontend sends: { "content": "...", "post": { "id": 5 } }
-     * We load the full Post and User from DB before saving.
-     */
-    public Comment createComment(Comment comment) {
-        String username = SecurityContextHolder.getContext()
-                .getAuthentication()
-                .getName();
-
-        User author = userRepository.findByUsername(username)
-                .orElseThrow(() -> new RuntimeException("User not found: " + username));
-
-        Long postId = comment.getPost().getId();
-        Post post = postRepository.findById(postId)
-                .orElseThrow(() -> new RuntimeException("Post not found: " + postId));
-
-        comment.setUser(author);
-        comment.setPost(post);
-        return commentRepository.save(comment);
+    public CommentService(CommentRepository commentRepository, PostRepository postRepository,
+            UserRepository userRepository) {
+        this.commentRepository = commentRepository;
+        this.postRepository = postRepository;
+        this.userRepository = userRepository;
     }
 
-    public List<Comment> getCommentsForPost(Long postId) {
-        return commentRepository.findByPostIdOrderByCreatedAtAsc(postId);
+    /** The author is always the authenticated user; the post must exist. */
+    @Transactional
+    public CommentResponse createComment(CreateCommentRequest request) {
+        Post post = postRepository.findById(request.post().id())
+                .orElseThrow(() -> new ResourceNotFoundException("Post not found"));
+        Comment comment = new Comment();
+        comment.setContent(request.content().trim());
+        comment.setPost(post);
+        comment.setUser(userRepository.getReferenceById(CurrentUser.get().getUserId()));
+        Comment saved = commentRepository.save(comment);
+        return CommentResponse.from(commentRepository.findById(saved.getId()).orElseThrow());
+    }
+
+    @Transactional(readOnly = true)
+    public List<CommentResponse> getCommentsForPost(Long postId) {
+        return commentRepository.findByPostIdOrderByCreatedAtAsc(postId).stream().map(CommentResponse::from).toList();
     }
 }
