@@ -60,8 +60,8 @@ class MigrationIT {
 	void freshDatabaseGetsTheFullSchema() throws Exception {
 		String url = newDatabase();
 		var result = flyway(url).migrate();
-		assertThat(result.migrationsExecuted).isEqualTo(3);
-		assertThat(result.targetSchemaVersion).isEqualTo("3");
+		assertThat(result.migrationsExecuted).isEqualTo(4);
+		assertThat(result.targetSchemaVersion).isEqualTo("4");
 	}
 
 	@Test
@@ -74,7 +74,7 @@ class MigrationIT {
 		execute(url, "INSERT INTO posts (content, user_id, likes_count, created_at) VALUES ('old post', 1, 3, now())");
 
 		var result = flyway(url).migrate();
-		assertThat(result.migrationsExecuted).isEqualTo(2); // V2 and V3 only; V1 is the baseline
+		assertThat(result.migrationsExecuted).isEqualTo(3); // V2-V4 only; V1 is the baseline
 
 		try (Connection c = DriverManager.getConnection(url, PG.getUsername(), PG.getPassword());
 				Statement s = c.createStatement()) {

@@ -28,6 +28,7 @@ import com.tca.UserManager.entity.User;
 import com.tca.UserManager.repository.PostRepository;
 import com.tca.UserManager.repository.UserRepository;
 import com.tca.UserManager.security.JwtService;
+import com.tca.UserManager.security.RateLimiter;
 import com.tca.UserManager.service.EmailService;
 
 /**
@@ -69,12 +70,14 @@ public abstract class IntegrationTestBase {
 	@Autowired protected PostRepository posts;
 	@Autowired protected PasswordEncoder passwordEncoder;
 	@Autowired protected JwtService jwtService;
+	@Autowired protected RateLimiter rateLimiter;
 
 	@MockitoBean protected EmailService emailService;
 
 	@BeforeEach
 	void cleanDatabase() {
 		jdbc.execute("TRUNCATE comments, posts, password_reset_tokens, users RESTART IDENTITY CASCADE");
+		rateLimiter.reset();
 	}
 
 	// ---- Fixtures ----

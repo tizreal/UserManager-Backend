@@ -15,21 +15,25 @@ import com.tca.UserManager.exception.domain.ResourceNotFoundException;
 import com.tca.UserManager.repository.PostRepository;
 import com.tca.UserManager.repository.UserRepository;
 import com.tca.UserManager.security.CurrentUser;
+import com.tca.UserManager.security.RateLimiter;
 
 @Service
 public class PostService {
 
     private final PostRepository postRepository;
     private final UserRepository userRepository;
+    private final RateLimiter rateLimiter;
 
-    public PostService(PostRepository postRepository, UserRepository userRepository) {
+    public PostService(PostRepository postRepository, UserRepository userRepository, RateLimiter rateLimiter) {
         this.postRepository = postRepository;
         this.userRepository = userRepository;
+        this.rateLimiter = rateLimiter;
     }
 
     /** The author is always the authenticated user, never a value from the request. */
     @Transactional
     public PostResponse createPost(CreatePostRequest request) {
+        rateLimiter.check(RateLimiter.Rule.POST_PER_USER, String.valueOf(CurrentUser.get().getUserId()));
         User author = userRepository.getReferenceById(CurrentUser.get().getUserId());
         Post post = new Post();
         post.setContent(request.content().trim());
@@ -45,6 +49,7 @@ public class PostService {
 
     @Transactional
     public PostResponse likePost(Long id) {
+        rateLimiter.check(RateLimiter.Rule.LIKE_PER_USER, String.valueOf(CurrentUser.get().getUserId()));
         Post post = findPost(id);
         post.setLikesCount(post.getLikesCount() + 1);
         return PostResponse.from(postRepository.save(post));
@@ -52,6 +57,7 @@ public class PostService {
 
     @Transactional
     public PostResponse unlikePost(Long id) {
+        rateLimiter.check(RateLimiter.Rule.LIKE_PER_USER, String.valueOf(CurrentUser.get().getUserId()));
         Post post = findPost(id);
         post.setLikesCount(Math.max(0, post.getLikesCount() - 1));
         return PostResponse.from(postRepository.save(post));

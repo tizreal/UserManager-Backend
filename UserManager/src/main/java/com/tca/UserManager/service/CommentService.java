@@ -14,6 +14,7 @@ import com.tca.UserManager.repository.CommentRepository;
 import com.tca.UserManager.repository.PostRepository;
 import com.tca.UserManager.repository.UserRepository;
 import com.tca.UserManager.security.CurrentUser;
+import com.tca.UserManager.security.RateLimiter;
 
 @Service
 public class CommentService {
@@ -21,17 +22,20 @@ public class CommentService {
     private final CommentRepository commentRepository;
     private final PostRepository postRepository;
     private final UserRepository userRepository;
+    private final RateLimiter rateLimiter;
 
     public CommentService(CommentRepository commentRepository, PostRepository postRepository,
-            UserRepository userRepository) {
+            UserRepository userRepository, RateLimiter rateLimiter) {
         this.commentRepository = commentRepository;
         this.postRepository = postRepository;
         this.userRepository = userRepository;
+        this.rateLimiter = rateLimiter;
     }
 
     /** The author is always the authenticated user; the post must exist. */
     @Transactional
     public CommentResponse createComment(CreateCommentRequest request) {
+        rateLimiter.check(RateLimiter.Rule.COMMENT_PER_USER, String.valueOf(CurrentUser.get().getUserId()));
         Post post = postRepository.findById(request.post().id())
                 .orElseThrow(() -> new ResourceNotFoundException("Post not found"));
         Comment comment = new Comment();

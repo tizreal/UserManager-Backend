@@ -2,6 +2,7 @@ package com.tca.UserManager;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -35,7 +36,7 @@ class UserJourneyIT extends IntegrationTestBase {
 
 		// Verify email with the token from the verification email
 		ArgumentCaptor<String> verification = ArgumentCaptor.forClass(String.class);
-		verify(emailService).sendVerificationEmail(any(User.class), verification.capture());
+		verify(emailService).sendVerificationEmail(any(User.class), eq("grace@example.com"), verification.capture());
 		mvc.perform(get("/user/verify/email").header(HttpHeaders.AUTHORIZATION, bearer(verification.getValue())))
 				.andExpect(status().isOk());
 
@@ -82,7 +83,8 @@ class UserJourneyIT extends IntegrationTestBase {
 
 		// Change password: a fresh token comes back and the old session is signed out
 		String newToken = mvc.perform(post("/user/update").header(HttpHeaders.AUTHORIZATION, token)
-				.contentType(MediaType.APPLICATION_JSON).content(toJson(Map.of("password", "new-cobol-password"))))
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(toJson(Map.of("password", "new-cobol-password", "currentPassword", "cobol-forever"))))
 				.andExpect(status().isOk())
 				.andExpect(header().exists(HttpHeaders.AUTHORIZATION))
 				.andReturn().getResponse().getHeader(HttpHeaders.AUTHORIZATION);

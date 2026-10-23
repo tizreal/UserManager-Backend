@@ -2,6 +2,7 @@ package com.tca.UserManager.entity;
 
 import java.io.Serializable;
 import java.sql.Timestamp;
+import java.time.Instant;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import jakarta.persistence.*;
@@ -58,6 +59,17 @@ public class User implements Serializable {
 	@JsonIgnore
 	@Column(name = "token_version", nullable = false)
 	private int tokenVersion = 0;
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "status", nullable = false, length = 20)
+	private AccountStatus status = AccountStatus.ACTIVE;
+
+	@Column(name = "deleted_at")
+	private Instant deletedAt;
+
+	// New address awaiting confirmation; users.email changes only once it is verified.
+	@Column(name = "pending_email", length = 254)
+	private String pendingEmail;
 
 	// Default constructor required by JPA
 	public User() {
@@ -167,6 +179,34 @@ public class User implements Serializable {
 
 	public void incrementTokenVersion() {
 		this.tokenVersion++;
+	}
+
+	public AccountStatus getStatus() {
+		return status;
+	}
+
+	public void setStatus(AccountStatus status) {
+		this.status = status;
+	}
+
+	public boolean isActive() {
+		return status == AccountStatus.ACTIVE;
+	}
+
+	public Instant getDeletedAt() {
+		return deletedAt;
+	}
+
+	public void setDeletedAt(Instant deletedAt) {
+		this.deletedAt = deletedAt;
+	}
+
+	public String getPendingEmail() {
+		return pendingEmail;
+	}
+
+	public void setPendingEmail(String pendingEmail) {
+		this.pendingEmail = pendingEmail;
 	}
 
 	@Override

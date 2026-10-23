@@ -27,6 +27,11 @@ public interface PasswordResetTokenRepository extends JpaRepository<PasswordRese
 			+ "WHERE t.tokenHash = :hash AND t.usedAt IS NULL AND t.expiresAt > :now")
 	int consume(@Param("hash") String tokenHash, @Param("now") Instant now);
 
+	/** Removes all of a user's reset tokens (account deletion). */
+	@Modifying(clearAutomatically = true, flushAutomatically = true)
+	@Query("DELETE FROM PasswordResetToken t WHERE t.userId = :userId")
+	int deleteAllForUser(@Param("userId") Integer userId);
+
 	/** Retires every outstanding token for a user (on new request or after a reset). */
 	@Modifying(clearAutomatically = true, flushAutomatically = true)
 	@Query("UPDATE PasswordResetToken t SET t.usedAt = :now WHERE t.userId = :userId AND t.usedAt IS NULL")

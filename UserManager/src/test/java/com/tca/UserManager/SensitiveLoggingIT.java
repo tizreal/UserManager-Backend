@@ -50,7 +50,8 @@ class SensitiveLoggingIT extends IntegrationTestBase {
 
 		String newSession = login("alice", "post-reset-password");
 		mvc.perform(post("/user/update").header(HttpHeaders.AUTHORIZATION, bearer(newSession))
-				.contentType(MediaType.APPLICATION_JSON).content(toJson(Map.of("password", "changed-again-password"))))
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(toJson(Map.of("password", "changed-again-password", "currentPassword", "post-reset-password"))))
 				.andExpect(status().isOk());
 
 		String logs = output.getAll();

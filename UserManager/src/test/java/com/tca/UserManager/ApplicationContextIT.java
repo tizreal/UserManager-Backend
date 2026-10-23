@@ -14,6 +14,6 @@ class ApplicationContextIT extends IntegrationTestBase {
 
 	@Test
 	void contextLoadsAndSchemaMatchesTheEntities() {
-		assertThat(jdbc.queryForObject("SELECT max(version) FROM flyway_schema_history", String.class)).isEqualTo("3");
+		assertThat(jdbc.queryForObject("SELECT max(version) FROM flyway_schema_history", String.class)).isEqualTo("4");
 	}
 }

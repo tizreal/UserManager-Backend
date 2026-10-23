@@ -2,6 +2,7 @@ package com.tca.UserManager.security;
 
 import static com.auth0.jwt.algorithms.Algorithm.HMAC512;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Date;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,6 +13,8 @@ import com.auth0.jwt.exceptions.JWTVerificationException;
 import com.auth0.jwt.interfaces.DecodedJWT;
 import com.tca.UserManager.entity.User;
 import com.tca.UserManager.provider.ResourceProvider;
+
+import jakarta.annotation.PostConstruct;
 
 /**
  * Issues and verifies purpose-bound JWTs.
@@ -32,6 +35,15 @@ public class JwtService {
 	@Autowired
 	ResourceProvider provider;
 
+	/** HMAC-SHA512 needs a long random key; refuse to start with a weak or missing one. */
+	@PostConstruct
+	void checkSecretStrength() {
+		String secret = provider.getJwtSecret();
+		if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
+			throw new IllegalStateException("JWT_SECRET must be at least 32 bytes (64+ random bytes recommended)");
+		}
+	}
+
 	public String generateAccessToken(User user) {
 		return JWT.create()
 				.withIssuer(provider.getJwtIssuer())
@@ -46,8 +58,16 @@ public class JwtService {
 				.sign(HMAC512(provider.getJwtSecret()));
 	}
 
-	/** Bound to the email address it was sent to, so it cannot verify a later address. */
+	/** Verification token for the account's current email address (signup). */
 	public String generateEmailVerificationToken(User user) {
+		return generateEmailVerificationToken(user, user.getEmail());
+	}
+
+	/**
+	 * Bound to the address it was sent to (the current email at signup, or the pending
+	 * address after an email change), so it cannot confirm any other address.
+	 */
+	public String generateEmailVerificationToken(User user, String recipientEmail) {
 		return JWT.create()
 				.withIssuer(provider.getJwtIssuer())
 				.withAudience(provider.getJwtAudience())
@@ -55,7 +75,7 @@ public class JwtService {
 				.withSubject(user.getUsername())
 				.withClaim(CLAIM_USER_ID, user.getUserId())
 				.withClaim(CLAIM_PURPOSE, TokenPurpose.EMAIL_VERIFICATION.claim())
-				.withClaim(CLAIM_EMAIL, user.getEmail())
+				.withClaim(CLAIM_EMAIL, recipientEmail)
 				.withExpiresAt(new Date(System.currentTimeMillis() + provider.getClientVerifyExpiration()))
 				.sign(HMAC512(provider.getJwtSecret()));
 	}

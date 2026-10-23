@@ -5,6 +5,7 @@ import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import com.tca.UserManager.entity.AccountStatus;
 import com.tca.UserManager.entity.Role;
 import com.tca.UserManager.entity.User;
 
@@ -18,4 +19,6 @@ public interface UserRepository extends JpaRepository<User, Integer> {
 	Optional<User> findByEmail(String email);
 
 	long countByRole(Role role);
+
+	long countByRoleAndStatus(Role role, AccountStatus status);
 }

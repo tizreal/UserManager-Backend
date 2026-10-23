@@ -24,57 +24,58 @@ import com.tca.UserManager.dto.UpdateProfileRequest;
 import com.tca.UserManager.dto.UserResponse;
 import com.tca.UserManager.entity.Role;
 import com.tca.UserManager.entity.User;
-import com.tca.UserManager.exception.domain.ConflictException;
 import com.tca.UserManager.exception.domain.EmailExistException;
 import com.tca.UserManager.exception.domain.EmailNotVerifiedException;
 import com.tca.UserManager.exception.domain.ForbiddenActionException;
+import com.tca.UserManager.exception.domain.IncorrectPasswordException;
 import com.tca.UserManager.exception.domain.InvalidTokenException;
 import com.tca.UserManager.exception.domain.ResourceNotFoundException;
 import com.tca.UserManager.exception.domain.UsernameExistException;
-import com.tca.UserManager.repository.CommentRepository;
-import com.tca.UserManager.repository.PostRepository;
 import com.tca.UserManager.repository.UserRepository;
 import com.tca.UserManager.security.CurrentUser;
 import com.tca.UserManager.security.JwtService;
+import com.tca.UserManager.security.RateLimiter;
 import com.tca.UserManager.security.TokenPurpose;
 
 @Service
 public class UserService {
 
 	private static final Logger logger = LoggerFactory.getLogger(UserService.class);
+	private static final String INVALID_VERIFICATION = "This verification link is invalid or has expired";
 
 	private final UserRepository userRepository;
-	private final PostRepository postRepository;
-	private final CommentRepository commentRepository;
 	private final EmailService emailService;
 	private final PasswordEncoder passwordEncoder;
 	private final AuthenticationManager authenticationManager;
 	private final JwtService jwtService;
 	private final DemoAccountPolicy demoPolicy;
+	private final RateLimiter rateLimiter;
 
-	public UserService(UserRepository userRepository, PostRepository postRepository,
-			CommentRepository commentRepository, EmailService emailService, PasswordEncoder passwordEncoder,
-			AuthenticationManager authenticationManager, JwtService jwtService, DemoAccountPolicy demoPolicy) {
+	public UserService(UserRepository userRepository, EmailService emailService, PasswordEncoder passwordEncoder,
+			AuthenticationManager authenticationManager, JwtService jwtService, DemoAccountPolicy demoPolicy,
+			RateLimiter rateLimiter) {
 		this.userRepository = userRepository;
-		this.postRepository = postRepository;
-		this.commentRepository = commentRepository;
 		this.emailService = emailService;
 		this.passwordEncoder = passwordEncoder;
 		this.authenticationManager = authenticationManager;
 		this.jwtService = jwtService;
 		this.demoPolicy = demoPolicy;
+		this.rateLimiter = rateLimiter;
 	}
 
 	// ---- Signup, verification, login -------------------------------------------------
 
 	/**
 	 * Builds a brand-new entity from the allowed request fields only. The id, role,
-	 * verification flag and token version can never come from the client.
+	 * status, verification flag and token version can never come from the client.
 	 */
 	@Transactional
 	public UserResponse signup(SignupRequest request) {
 		String username = normalize(request.username());
 		String email = normalize(request.email());
+		if (username.startsWith(AccountLifecycleService.DELETED_USERNAME_PREFIX)) {
+			throw new UsernameExistException("This username is reserved");
+		}
 		userRepository.findByUsername(username).ifPresent(u -> {
 			throw new UsernameExistException("Username already exists: " + username);
 		});
@@ -99,26 +100,46 @@ public class UserService {
 		// saveAndFlush so a concurrent duplicate fails here on the unique index (409),
 		// before any email is sent.
 		User saved = userRepository.saveAndFlush(user);
-		emailService.sendVerificationEmail(saved, jwtService.generateEmailVerificationToken(saved));
+		emailService.sendVerificationEmail(saved, saved.getEmail(), jwtService.generateEmailVerificationToken(saved));
 		logger.debug("Signed up user id={}", saved.getUserId());
 		return UserResponse.from(saved);
 	}
 
-	/** Accepts only an EMAIL_VERIFICATION token, and only for the address it was sent to. */
+	/**
+	 * Accepts only an EMAIL_VERIFICATION token, for an ACTIVE account, and only for the
+	 * address the token was sent to: either the current email (signup) or the pending
+	 * email (an address change, which is applied only now).
+	 */
 	@Transactional
 	public void verifyEmail(String token) {
 		DecodedJWT jwt;
 		try {
 			jwt = jwtService.verify(token, TokenPurpose.EMAIL_VERIFICATION);
 		} catch (JWTVerificationException ex) {
-			throw new InvalidTokenException("This verification link is invalid or has expired");
+			throw new InvalidTokenException(INVALID_VERIFICATION);
 		}
+		String tokenEmail = JwtService.email(jwt);
 		User user = userRepository.findById(JwtService.userId(jwt))
+				.filter(User::isActive)
 				.filter(u -> Objects.equals(u.getUsername(), jwt.getSubject()))
-				.filter(u -> Objects.equals(u.getEmail(), JwtService.email(jwt)))
-				.orElseThrow(() -> new InvalidTokenException("This verification link is invalid or has expired"));
-		user.setEmailVerified(true);
-		userRepository.save(user);
+				.orElseThrow(() -> new InvalidTokenException(INVALID_VERIFICATION));
+
+		if (tokenEmail != null && tokenEmail.equals(user.getEmail())) {
+			user.setEmailVerified(true);
+		} else if (tokenEmail != null && tokenEmail.equals(user.getPendingEmail())) {
+			// Someone may have registered the address since the change was requested.
+			userRepository.findByEmail(tokenEmail).filter(u -> !u.getUserId().equals(user.getUserId()))
+					.ifPresent(u -> {
+						throw new EmailExistException("Email already in use: " + tokenEmail);
+					});
+			user.setEmail(tokenEmail);
+			user.setPendingEmail(null);
+			user.setEmailVerified(true);
+		} else {
+			throw new InvalidTokenException(INVALID_VERIFICATION);
+		}
+		user.setUpdatedAt(Timestamp.from(Instant.now()));
+		userRepository.saveAndFlush(user);
 	}
 
 	public record LoginResult(UserResponse user, String accessToken) {
@@ -150,8 +171,13 @@ public class UserService {
 	}
 
 	/**
-	 * Updates the caller's own profile. The demo account is read-only. Changing the
-	 * password signs out every other session and returns a fresh token for this one.
+	 * Updates the caller's own profile. The demo account is read-only.
+	 *
+	 * Changing the password or the email address requires the current password.
+	 * A new password signs out every other session and returns a fresh token for this one.
+	 * A new email address is stored as pending and only replaces the current address once
+	 * it is confirmed from the new inbox; until then login and reset keep using the
+	 * current, verified address.
 	 */
 	@Transactional
 	public UpdateResult updateProfile(UpdateProfileRequest request) {
@@ -161,30 +187,42 @@ public class UserService {
 			throw new ForbiddenActionException("The demo account's profile and credentials can't be changed");
 		}
 
-		if (StringUtils.hasText(request.email())) {
-			String email = normalize(request.email());
-			userRepository.findByEmail(email)
+		String requestedEmail = StringUtils.hasText(request.email()) ? normalize(request.email()) : null;
+		boolean emailChange = requestedEmail != null && !requestedEmail.equals(current.getEmail());
+		boolean passwordChange = StringUtils.hasText(request.password());
+
+		if (emailChange || passwordChange) {
+			rateLimiter.check(RateLimiter.Rule.CURRENT_PASSWORD_PER_USER, String.valueOf(current.getUserId()));
+			if (!StringUtils.hasText(request.currentPassword())
+					|| !passwordEncoder.matches(request.currentPassword(), current.getPassword())) {
+				throw new IncorrectPasswordException();
+			}
+		}
+
+		if (emailChange) {
+			userRepository.findByEmail(requestedEmail)
 					.filter(u -> !u.getUserId().equals(current.getUserId()))
 					.ifPresent(u -> {
-						throw new EmailExistException("Email already in use: " + email);
+						throw new EmailExistException("Email already in use: " + requestedEmail);
 					});
-			current.setEmail(email);
+			current.setPendingEmail(requestedEmail);
 		}
 		if (StringUtils.hasText(request.firstName())) current.setFirstName(request.firstName().trim());
 		if (StringUtils.hasText(request.lastName())) current.setLastName(request.lastName().trim());
 		if (StringUtils.hasText(request.phoneNumber())) current.setPhoneNumber(request.phoneNumber().trim());
 		if (StringUtils.hasText(request.countryCode())) current.setCountryCode(request.countryCode().trim());
-
-		String newToken = null;
-		if (StringUtils.hasText(request.password())) {
+		if (passwordChange) {
 			current.setPassword(passwordEncoder.encode(request.password()));
 			current.incrementTokenVersion();
 		}
 		current.setUpdatedAt(Timestamp.from(Instant.now()));
 		User saved = userRepository.saveAndFlush(current);
-		if (StringUtils.hasText(request.password())) {
-			newToken = jwtService.generateAccessToken(saved);
+
+		if (emailChange) {
+			emailService.sendVerificationEmail(saved, requestedEmail,
+					jwtService.generateEmailVerificationToken(saved, requestedEmail));
 		}
+		String newToken = passwordChange ? jwtService.generateAccessToken(saved) : null;
 		return new UpdateResult(UserResponse.from(saved), newToken);
 	}
 
@@ -197,29 +235,6 @@ public class UserService {
 	public UserResponse findByUsername(String username) {
 		return userRepository.findByUsername(normalize(username)).map(UserResponse::from)
 				.orElseThrow(() -> new ResourceNotFoundException("User not found"));
-	}
-
-	/**
-	 * Hard-deletes an account that has no posts or comments. Accounts with content are
-	 * refused (409) rather than cascade-deleted, pending a decision on soft deletion.
-	 * Admins cannot delete themselves or the last remaining admin.
-	 */
-	@Transactional
-	public void deleteUser(Integer userId) {
-		User admin = CurrentUser.get();
-		User target = userRepository.findById(userId)
-				.orElseThrow(() -> new ResourceNotFoundException("User not found"));
-		if (target.getUserId().equals(admin.getUserId())) {
-			throw new ConflictException("You can't delete your own account");
-		}
-		if (target.getRole() == Role.ADMIN && userRepository.countByRole(Role.ADMIN) <= 1) {
-			throw new ConflictException("Can't delete the last remaining admin");
-		}
-		if (postRepository.existsByUserUserId(userId) || commentRepository.existsByUserUserId(userId)) {
-			throw new ConflictException("This user has posts or comments; deleting accounts with content is not supported yet");
-		}
-		userRepository.delete(target);
-		userRepository.flush();
 	}
 
 	// ---- Helpers -----------------------------------------------------------------------

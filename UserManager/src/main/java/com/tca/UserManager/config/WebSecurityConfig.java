@@ -76,10 +76,11 @@ public class WebSecurityConfig {
 				.requestMatchers("/error").permitAll()
 				// Own account (must come before the admin patterns below)
 				.requestMatchers(HttpMethod.GET, "/user/get").authenticated()
-				.requestMatchers(HttpMethod.POST, "/user/update").authenticated()
+				.requestMatchers(HttpMethod.POST, "/user/update", "/user/delete-account").authenticated()
 				// Admin only: listing, looking up, and deleting other accounts
 				.requestMatchers(HttpMethod.GET, "/user/", "/user/*").hasRole("ADMIN")
 				.requestMatchers(HttpMethod.DELETE, "/user/*").hasRole("ADMIN")
+				.requestMatchers(HttpMethod.POST, "/user/*/deactivate", "/user/*/reactivate").hasRole("ADMIN")
 				// Everything else (posts, comments) requires a logged-in user
 				.anyRequest().authenticated())
 			.exceptionHandling(ex -> ex

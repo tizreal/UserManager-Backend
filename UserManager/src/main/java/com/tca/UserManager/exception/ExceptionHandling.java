@@ -91,6 +91,19 @@ status.getReasonPhrase().toUpperCase(), msg),
         return createHttpResponse(CONFLICT, ex.getMessage());
     }
 
+    @ExceptionHandler(RateLimitedException.class)
+    public ResponseEntity<HttpResponse> rateLimitedException(RateLimitedException ex) {
+        HttpStatus status = TOO_MANY_REQUESTS;
+        return ResponseEntity.status(status)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(ex.getRetryAfterSeconds()))
+                .body(new HttpResponse(status.value(), status, status.getReasonPhrase().toUpperCase(), ex.getMessage()));
+    }
+
+    @ExceptionHandler(IncorrectPasswordException.class)
+    public ResponseEntity<HttpResponse> incorrectPasswordException(IncorrectPasswordException ex) {
+        return createHttpResponse(BAD_REQUEST, ex.getMessage());
+    }
+
     @ExceptionHandler(InvalidTokenException.class)
     public ResponseEntity<HttpResponse> invalidTokenException(InvalidTokenException ex) {
         return createHttpResponse(BAD_REQUEST, ex.getMessage());

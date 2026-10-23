@@ -68,7 +68,8 @@ public class PasswordResetService {
 	public void requestReset(String email) {
 		String normalized = email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
 		User user = userRepository.findByEmail(normalized).orElse(null);
-		if (user == null || demoPolicy.isDemo(user)) {
+		// Only active, non-demo accounts get reset links.
+		if (user == null || !user.isActive() || demoPolicy.isDemo(user)) {
 			return;
 		}
 
@@ -95,7 +96,7 @@ public class PasswordResetService {
 				.orElseThrow(() -> new InvalidTokenException(INVALID));
 		User user = userRepository.findById(token.getUserId())
 				.orElseThrow(() -> new InvalidTokenException(INVALID));
-		if (demoPolicy.isDemo(user)) {
+		if (demoPolicy.isDemo(user) || !user.isActive()) {
 			throw new InvalidTokenException(INVALID);
 		}
 

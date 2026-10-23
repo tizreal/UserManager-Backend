@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 
 import com.auth0.jwt.JWT;
+import com.tca.UserManager.entity.AccountStatus;
 import com.tca.UserManager.entity.Role;
 import com.tca.UserManager.entity.User;
 import com.tca.UserManager.support.IntegrationTestBase;
@@ -51,7 +52,7 @@ class AuthorizationIT extends IntegrationTestBase {
 	}
 
 	@Test
-	void adminCanDeleteAUserWithoutContent_andTheirTokenStopsWorking() throws Exception {
+	void adminDeletionAnonymizesTheAccountAndTheirTokenStopsWorking() throws Exception {
 		User admin = createUser("root", Role.ADMIN);
 		User bob = createUser("bob", Role.USER);
 		String bobToken = tokenFor(bob);
@@ -59,21 +60,22 @@ class AuthorizationIT extends IntegrationTestBase {
 		mvc.perform(delete("/user/" + bob.getUserId()).header(HttpHeaders.AUTHORIZATION, bearer(tokenFor(admin))))
 				.andExpect(status().isOk());
 
-		assertThat(users.findById(bob.getUserId())).isEmpty();
+		User after = users.findById(bob.getUserId()).orElseThrow();
+		assertThat(after.getStatus()).isEqualTo(AccountStatus.DELETED);
+		assertThat(after.getUsername()).isEqualTo("deleted-user-" + bob.getUserId());
 		mvc.perform(get("/user/get").header(HttpHeaders.AUTHORIZATION, bearer(bobToken)))
 				.andExpect(status().isUnauthorized());
 	}
 
 	@Test
-	void deletingAUserWithContentIsRefusedWithoutCascading() throws Exception {
+	void deletingAUserKeepsTheirContentWithoutCascading() throws Exception {
 		User admin = createUser("root", Role.ADMIN);
 		User bob = createUser("bob", Role.USER);
 		var post = createPost(bob, "bob's post");
 
 		mvc.perform(delete("/user/" + bob.getUserId()).header(HttpHeaders.AUTHORIZATION, bearer(tokenFor(admin))))
-				.andExpect(status().isConflict());
+				.andExpect(status().isOk());
 
-		assertThat(users.findById(bob.getUserId())).isPresent();
 		assertThat(posts.findById(post.getId())).isPresent();
 	}
 

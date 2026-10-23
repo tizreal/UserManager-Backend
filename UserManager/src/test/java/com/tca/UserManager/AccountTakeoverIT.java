@@ -167,7 +167,8 @@ class AccountTakeoverIT extends IntegrationTestBase {
 		User alice = createUser("alice", Role.USER);
 		createUser("bob", Role.USER);
 		mvc.perform(post("/user/update").header(HttpHeaders.AUTHORIZATION, bearer(tokenFor(alice)))
-				.contentType(MediaType.APPLICATION_JSON).content(toJson(Map.of("email", "BOB@example.com"))))
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(toJson(Map.of("email", "BOB@example.com", "currentPassword", PASSWORD))))
 				.andExpect(status().isBadRequest());
 		assertThat(users.findById(alice.getUserId()).orElseThrow().getEmail()).isEqualTo("alice@example.com");
 	}

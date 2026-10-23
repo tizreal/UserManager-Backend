@@ -38,4 +38,10 @@ public class CustomUserDetails implements UserDetails {
 	public String getUsername() {
 		return user.getUsername();
 	}
+
+	// Disabled and deleted accounts cannot log in (Spring Security raises DisabledException).
+	@Override
+	public boolean isEnabled() {
+		return user.isActive();
+	}
 }

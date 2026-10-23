@@ -12,6 +12,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.tca.UserManager.entity.Role;
 import com.tca.UserManager.entity.User;
+import com.tca.UserManager.repository.CommentRepository;
+import com.tca.UserManager.repository.PostRepository;
 import com.tca.UserManager.repository.UserRepository;
 
 @Component
@@ -19,6 +21,8 @@ public class DemoDataSeeder implements CommandLineRunner {
 
 	private final UserRepository userRepository;
 	private final PasswordEncoder passwordEncoder;
+	private final PostRepository postRepository;
+	private final CommentRepository commentRepository;
 
 	@Value("${app.seed-demo:false}")
 	private boolean seedDemo;
@@ -26,9 +30,12 @@ public class DemoDataSeeder implements CommandLineRunner {
 	@Value("${DEMO_PASSWORD:Demo123!}")
 	private String demoPassword;
 
-	public DemoDataSeeder(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+	public DemoDataSeeder(UserRepository userRepository, PasswordEncoder passwordEncoder,
+			PostRepository postRepository, CommentRepository commentRepository) {
 		this.userRepository = userRepository;
 		this.passwordEncoder = passwordEncoder;
+		this.postRepository = postRepository;
+		this.commentRepository = commentRepository;
 	}
 
 	@Override
@@ -40,6 +47,13 @@ public class DemoDataSeeder implements CommandLineRunner {
 		// The account recruiters log in with. Always a plain USER; its password is
 		// reset to the public demo password on every boot.
 		upsert("demo", "demo@usermanager.dev", "Demo", "User", demoPassword);
+
+		// Abuse control: whatever demo visitors posted is cleared on every boot (the free
+		// Render instance restarts after idling, so this happens frequently).
+		userRepository.findByUsername("demo").ifPresent(demo -> {
+			commentRepository.deleteByUserId(demo.getUserId());
+			postRepository.deleteAll(postRepository.findByUserUserId(demo.getUserId()));
+		});
 
 		// Filler users so lists aren't empty. They get a random password each boot so
 		// nobody can sign in as them with the public demo password.

@@ -30,7 +30,7 @@ import jakarta.servlet.http.HttpServletResponse;
  * Authenticates requests carrying an access token in the Authorization header.
  *
  * A token is accepted only if: the signature, issuer, audience and expiry are valid; its
- * purpose is ACCESS; the user still exists; the username still matches; the email is
+ * purpose is ACCESS; the user still exists and is ACTIVE; the username still matches; the email is
  * verified; and its token version equals the user's current token_version (so tokens
  * issued before a password reset, or for a deleted account, stop working).
  *
@@ -71,6 +71,7 @@ public class JwtAuthorizationFilter extends OncePerRequestFilter {
 
 		User user = userRepository.findById(JwtService.userId(jwt)).orElse(null);
 		if (user == null
+				|| !user.isActive()
 				|| !Objects.equals(user.getUsername(), jwt.getSubject())
 				|| !Boolean.TRUE.equals(user.getEmailVerified())
 				|| !Objects.equals(user.getTokenVersion(), JwtService.tokenVersion(jwt))) {

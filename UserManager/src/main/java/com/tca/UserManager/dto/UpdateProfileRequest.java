@@ -12,12 +12,14 @@ public record UpdateProfileRequest(
 		@Size(max = 5) String countryCode,
 		@Email @Size(max = 254) String email,
 		// Empty means "keep the current password"; otherwise 8-72 characters (BCrypt limit).
-		@Pattern(regexp = "^$|^.{8,72}$", message = "must be 8 to 72 characters") String password) {
+		@Pattern(regexp = "^$|^.{8,72}$", message = "must be 8 to 72 characters") String password,
+		// Required when changing the password or the email address.
+		@Size(max = 72) String currentPassword) {
 
 	// Spring MVC logs parsed request bodies at DEBUG via toString(); never print the password.
 	@Override
 	public String toString() {
 		return "UpdateProfileRequest[firstName=" + firstName + ", lastName=" + lastName
-				+ ", passwordChanged=" + (password != null && !password.isEmpty()) + "]";
+				+ ", passwordChanged=" + (password != null && !password.isEmpty()) + ", currentPassword=***]";
 	}
 }

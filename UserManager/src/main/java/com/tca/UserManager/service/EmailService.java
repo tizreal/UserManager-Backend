@@ -38,8 +38,8 @@ public class EmailService {
 	// Tokens are created by the caller (UserService / PasswordResetService) and are
 	// only placed in the email body. They are never logged.
 	@Async
-	public void sendVerificationEmail(User user, String token) {
-		this.sendEmail(user, this.provider.getClientVerifyParam(),
+	public void sendVerificationEmail(User user, String recipientEmail, String token) {
+		this.sendEmail(user, recipientEmail, this.provider.getClientVerifyParam(),
 				"verify_email",
 				String.format("Welcome %s %s", user.getFirstName(), user.getLastName()),
 				token
@@ -48,12 +48,13 @@ public class EmailService {
 
 	@Async
 	public void sendResetPasswordEmail(User user, String token) {
-		this.sendEmail(user, this.provider.getClientResetParam(),
+		this.sendEmail(user, user.getEmail(), this.provider.getClientResetParam(),
 				"reset_password", "Reset your password", token
 		);
 	}
 
-	private void sendEmail(User user, String clientParam, String templateName, String subject, String token) {
+	private void sendEmail(User user, String recipientEmail, String clientParam, String templateName, String subject,
+			String token) {
 		try {
 			// 1. Build the Thymeleaf context
 			Context context = new Context();
@@ -68,7 +69,7 @@ public class EmailService {
 			// 3. Build the JSON payload for Resend's API
 			var payload = objectMapper.createObjectNode();
 			payload.put("from", this.emailFrom);
-			payload.putArray("to").add(user.getEmail());
+			payload.putArray("to").add(recipientEmail);
 			payload.put("subject", subject);
 			payload.put("html", htmlContent);
 
