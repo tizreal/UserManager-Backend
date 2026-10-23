@@ -57,7 +57,9 @@ FROM (
 WHERE prev_created_at IS NOT NULL AND created_at < prev_created_at
 ORDER BY user_id;
 
--- 9. Incident assessment: gaps in id sequences (deleted rows or failed inserts).
+-- 9. Informational only: gaps in id sequences. PostgreSQL sequences skip values routinely
+--    (rolled-back inserts, failed validations, crashes), so a gap is NOT evidence of deletion
+--    on its own; it only matters if logs or audit records corroborate it.
 SELECT 'users' AS tbl, s AS missing_id
 FROM generate_series(1, (SELECT coalesce(max(user_id), 0) FROM users)) s
 WHERE NOT EXISTS (SELECT 1 FROM users WHERE user_id = s)
@@ -72,20 +74,27 @@ SELECT user_id, user_name, email_verified, created_at, updated_at
 FROM users WHERE user_name = 'demo';
 
 -- =====================================================================================
--- Section B (added later): privileges and connection checks for Flyway. Still READ-ONLY.
--- Run these while connected AS THE SAME ROLE the application uses (DATABASE_USERNAME).
--- In the Neon SQL editor, pick that role in the role selector if it differs from the default.
+-- Section B (added later): role, privilege and connection checks. Still READ-ONLY.
+-- Two roles matter and may be the same or different:
+--   * MIGRATION role: the one Flyway connects as (SPRING_FLYWAY_USER if set, otherwise
+--     DATABASE_USERNAME). It must be able to run V2-V4.
+--   * APPLICATION role: DATABASE_USERNAME. It must be able to read/write the tables afterwards.
+-- Run B1-B3 connected as the MIGRATION role, and B1 + B6 connected as the APPLICATION role.
+-- If they are the same role, run everything once. In the Neon SQL editor, choose the role in
+-- the role selector.
 -- =====================================================================================
 
--- B1. Which role is this session using? Must equal the app's DATABASE_USERNAME.
+-- B1. Which role is this session using?
 SELECT current_user, session_user, current_database();
 
--- B2. Owners of the existing tables. ALTER TABLE (V2, V4) and CREATE INDEX require the app
---     role to own "users". Expected: tableowner = the app role for all three tables.
-SELECT tablename, tableowner FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;
+-- B2. (Migration role) Table owners. ALTER TABLE and CREATE INDEX on "users" (V2, V4) require
+--     the migration role to own "users" (or be a member of the owning role).
+SELECT t.tablename, t.tableowner,
+       pg_has_role(current_user, t.tableowner, 'MEMBER') AS current_role_can_act_as_owner
+FROM pg_tables t WHERE t.schemaname = 'public' ORDER BY t.tablename;
 
--- B3. The app role can create tables in "public" (V3 creates password_reset_tokens, and
---     Flyway creates flyway_schema_history). Expected: true, true.
+-- B3. (Migration role) Can create objects in "public" (V3 creates password_reset_tokens; Flyway
+--     creates flyway_schema_history). Expected: true, true.
 SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_in_public,
        has_schema_privilege(current_user, 'public', 'USAGE')  AS can_use_public;
 
@@ -97,3 +106,23 @@ WHERE name IN ('server_version', 'lock_timeout', 'statement_timeout', 'idle_in_t
 --     (host contains "-pooler"). If it does, set SPRING_FLYWAY_URL (and SPRING_FLYWAY_USER /
 --     SPRING_FLYWAY_PASSWORD) to the DIRECT (non-pooler) endpoint so migrations run on a
 --     normal session. The application itself can keep using the pooler.
+
+-- B6. (Application role) Read/write access to the existing tables and their id sequences.
+--     Expected: all true. (Owners have these implicitly.)
+SELECT c.relname AS object, c.relkind,
+       CASE WHEN c.relkind = 'r' THEN
+            has_table_privilege(current_user, c.oid, 'SELECT')
+        AND has_table_privilege(current_user, c.oid, 'INSERT')
+        AND has_table_privilege(current_user, c.oid, 'UPDATE')
+        AND has_table_privilege(current_user, c.oid, 'DELETE')
+       ELSE has_sequence_privilege(current_user, c.oid, 'USAGE') END AS app_access_ok
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relkind IN ('r', 'S')
+ORDER BY c.relkind, c.relname;
+
+-- B7. (Either role) Only relevant when the two roles differ: default privileges the migration
+--     role grants on tables/sequences it creates later (V3's password_reset_tokens). If no
+--     row grants the application role access, V3's table will need an explicit GRANT.
+SELECT pg_get_userbyid(d.defaclrole) AS creator_role, d.defaclobjtype AS object_type, d.defaclacl AS grants
+FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace
+WHERE n.nspname = 'public';

@@ -12,8 +12,11 @@ Versions: Spring Boot 3.4.1, Hibernate 6.6.4, Flyway 10.20.1, PostgreSQL JDBC 42
 
 ## 1. Preflight (read-only)
 
-Run `docs/preflight.sql` in the Neon SQL editor. Run section B **as the role the app uses**
-(`DATABASE_USERNAME`).
+Run `docs/preflight.sql` in the Neon SQL editor. Section B distinguishes two roles that may be
+the same or different: the **migration role** (what Flyway connects as: `SPRING_FLYWAY_USER`
+if set, otherwise `DATABASE_USERNAME`) and the **application role** (`DATABASE_USERNAME`).
+Run B1–B3 as the migration role and B1 + B6 as the application role. Using different roles is
+fine as long as each passes its own checks.
 
 | Check | Expected | If not |
 |---|---|---|
@@ -24,17 +27,20 @@ Run `docs/preflight.sql` in the Neon SQL editor. Run section B **as the role the
 | 5 Case-insensitive duplicates | No rows | V2 would fail; remediation changes data **[approval]** |
 | 6 `deleted-user-` usernames | No rows | Rename first **[approval]** |
 | 7 Counts / PG version | PG ≥ 11 | Older versions rewrite tables on `ADD COLUMN … DEFAULT` |
-| 8–9 Incident queries | Ideally no rows | Section 9 |
+| 8 Overwrite pattern | Ideally no rows | Investigate with logs (section 9) |
+| 9 ID gaps | Informational | Not evidence on its own: sequences skip values routinely. Only meaningful with corroborating logs |
 | 10 Demo account | Exists, verified | Recreated by the seeder if `APP_SEED_DEMO=true` |
-| B1 Session role | = `DATABASE_USERNAME` | Re-run section B as that role |
-| B2 Table owners | = app role | `ALTER TABLE` would fail: transfer ownership or migrate as the owner **[approval]** |
-| B3 `public` privileges | `CREATE`, `USAGE` = true | Grant, or migrate as the owner **[approval]** |
+| B1 Session role | The role you intended to check | Re-run as the right role |
+| B2 (migration role) | Owns `users`, or `current_role_can_act_as_owner` = true | Migrate as the owner via `SPRING_FLYWAY_USER`, or transfer ownership **[approval]** |
+| B3 (migration role) | `CREATE`, `USAGE` on `public` = true | Grant, or migrate as a role that has them **[approval]** |
+| B6 (application role) | All `app_access_ok` = true | Grant DML/sequence usage to the application role **[approval]** |
+| B7 (only if roles differ) | Default privileges grant the application role access to new tables | Plan explicit grants for `password_reset_tokens` after V3 **[approval]** |
 | B5 Pooler | `DATABASE_URL` host without `-pooler` | Set `SPRING_FLYWAY_URL` (+ `_USER`, `_PASSWORD`) to the direct endpoint (honored; tested in `FlywaySeparateConnectionIT`) |
 
-If Flyway runs as a different role from the application (B1 ≠ B2 owner), the application
-role also needs `SELECT, INSERT, UPDATE, DELETE` on the new `password_reset_tokens` table and
-`USAGE` on its identity sequence after V3 **[approval]**. On Neon the application normally
-connects as the owner, in which case nothing is needed.
+If the migration and application roles differ, the application role also needs
+`SELECT, INSERT, UPDATE, DELETE` on the new `password_reset_tokens` table and `USAGE` on its
+identity sequence after V3, unless B7 shows default privileges that already grant them
+**[approval]**. If both are the same role (typical on Neon), nothing extra is needed.
 
 ## 2. How Flyway will behave on production (tested in `MigrationIT`)
 
@@ -194,7 +200,8 @@ Steps:
    `DELETE /api/posts`, `signup()`.
 2. List the accounts with logged reset bodies. Those passwords are exposed; owners should change
    them (and wherever they reused them).
-3. Review preflight queries 8–9.
+3. Review preflight query 8. Treat query 9's ID gaps as context only: they become relevant
+   only if logs show matching delete requests.
 4. Delete the affected logs if Render allows it; otherwise record that they expire with the
    retention window. Check any log streams or drains.
 5. Treat all bcrypt hashes as exposed: owners of real accounts should change passwords.
