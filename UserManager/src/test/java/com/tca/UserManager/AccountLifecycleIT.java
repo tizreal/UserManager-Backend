@@ -142,12 +142,21 @@ class AccountLifecycleIT extends IntegrationTestBase {
 				Integer.class, bob.getUserId())).isZero();
 		expectLoginFails("bob", PASSWORD);
 
-		// Posts and comments remain, attributed to the anonymized account; images are removed
-		assertThat(posts.findById(bobPost.getId()).orElseThrow().getImage()).isNull();
+		// Posts and comments stay in their threads, but their text and images are removed,
+		// and the author is shown generically, with no id or internal name
+		var redactedPost = posts.findById(bobPost.getId()).orElseThrow();
+		assertThat(redactedPost.getImage()).isNull();
+		assertThat(redactedPost.getContent()).isEqualTo("[deleted]");
 		mvc.perform(get("/comments/" + alicePost.getId()).header(HttpHeaders.AUTHORIZATION, bearer(tokenFor(alice))))
-				.andExpect(jsonPath("$[0].content").value("bob replies"))
-				.andExpect(jsonPath("$[0].user.username").value("deleted-user-" + bob.getUserId()))
+				.andExpect(jsonPath("$[0].content").value("[deleted]"))
+				.andExpect(jsonPath("$[0].user.username").value("Deleted user"))
+				.andExpect(jsonPath("$[0].user.userId").doesNotExist())
 				.andExpect(jsonPath("$[0].user.firstName").doesNotExist());
+		String feed = mvc.perform(get("/posts/").header(HttpHeaders.AUTHORIZATION, bearer(tokenFor(alice))))
+				.andReturn().getResponse().getContentAsString();
+		assertThat(feed).doesNotContain("deleted-user-").doesNotContain("bob replies").doesNotContain("personal-photo");
+		// Other users' content is untouched
+		assertThat(posts.findById(alicePost.getId()).orElseThrow().getContent()).isEqualTo("alice's post");
 
 		// The email address is free again
 		mvc.perform(post("/user/signup").contentType(MediaType.APPLICATION_JSON)

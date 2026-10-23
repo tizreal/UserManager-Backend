@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Repository
@@ -19,8 +20,11 @@ public interface PostRepository extends JpaRepository<Post, Long> {
 
     List<Post> findByUserUserId(Integer userId);
 
-    // Removes images (which may be personal photos) from an anonymized user's posts.
+    List<Post> findByUserUserIdAndCreatedAtBefore(Integer userId, LocalDateTime cutoff);
+
+    // Account deletion: the post stays (so replies keep their thread) but its text and
+    // image, which may contain personal data, are removed.
     @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("UPDATE Post p SET p.image = NULL WHERE p.user.userId = :userId")
-    int clearImagesForUser(@Param("userId") Integer userId);
+    @Query("UPDATE Post p SET p.content = :placeholder, p.image = NULL WHERE p.user.userId = :userId")
+    int redactForUser(@Param("userId") Integer userId, @Param("placeholder") String placeholder);
 }

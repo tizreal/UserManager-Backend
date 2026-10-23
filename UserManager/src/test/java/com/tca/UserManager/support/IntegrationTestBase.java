@@ -43,7 +43,9 @@ import com.tca.UserManager.service.EmailService;
 		"MAIL_HOST=localhost", "MAIL_USERNAME=test", "MAIL_PASSWORD=test",
 		"DATABASE_URL=jdbc:postgresql://overridden", "DATABASE_USERNAME=overridden", "DATABASE_PASSWORD=overridden",
 		"app.seed-demo=false",
-		"app.demo.username=demo" })
+		"app.demo.username=demo",
+		// MockMvc requests have no proxy in front; RateLimitIT sets remote addresses explicitly.
+		"app.client-ip.mode=REMOTE_ADDR" })
 @AutoConfigureMockMvc
 public abstract class IntegrationTestBase {
 

@@ -19,6 +19,7 @@ import com.tca.UserManager.exception.domain.ConflictException;
 import com.tca.UserManager.exception.domain.ForbiddenActionException;
 import com.tca.UserManager.exception.domain.IncorrectPasswordException;
 import com.tca.UserManager.exception.domain.ResourceNotFoundException;
+import com.tca.UserManager.repository.CommentRepository;
 import com.tca.UserManager.repository.PasswordResetTokenRepository;
 import com.tca.UserManager.repository.PostRepository;
 import com.tca.UserManager.repository.UserRepository;
@@ -35,9 +36,11 @@ import com.tca.UserManager.security.RateLimiter;
  * Delete (admin, or the user with their current password; irreversible): personal data
  * on the account is anonymized in place: username becomes "deleted-user-<id>"; email,
  * pending email, names, phone and country code are cleared; the password is replaced
- * with an unusable random hash. Sessions are revoked and reset tokens deleted. Post and
- * comment text stays, attributed to the anonymized account, so discussions keep their
- * structure; post images are removed because they may be personal photos.
+ * with an unusable random hash. Sessions are revoked and reset tokens deleted. The user's
+ * posts and comments stay in place, so threads and other people's replies keep their
+ * structure, but their text is replaced with "[deleted]" and images are removed, because
+ * free text and photos can contain personal data. Publicly the author appears as
+ * "Deleted user" (see AuthorSummary).
  *
  * Neither operation may leave the system without an ACTIVE admin, and the shared demo
  * account cannot be deleted (it can be deactivated by an admin if it is being abused).
@@ -46,22 +49,25 @@ import com.tca.UserManager.security.RateLimiter;
 public class AccountLifecycleService {
 
 	public static final String DELETED_USERNAME_PREFIX = "deleted-user-";
+	public static final String REDACTED_CONTENT = "[deleted]";
 
 	private static final Logger logger = LoggerFactory.getLogger(AccountLifecycleService.class);
 	private static final SecureRandom RANDOM = new SecureRandom();
 
 	private final UserRepository userRepository;
 	private final PostRepository postRepository;
+	private final CommentRepository commentRepository;
 	private final PasswordResetTokenRepository tokenRepository;
 	private final PasswordEncoder passwordEncoder;
 	private final DemoAccountPolicy demoPolicy;
 	private final RateLimiter rateLimiter;
 
 	public AccountLifecycleService(UserRepository userRepository, PostRepository postRepository,
-			PasswordResetTokenRepository tokenRepository, PasswordEncoder passwordEncoder,
-			DemoAccountPolicy demoPolicy, RateLimiter rateLimiter) {
+			CommentRepository commentRepository, PasswordResetTokenRepository tokenRepository,
+			PasswordEncoder passwordEncoder, DemoAccountPolicy demoPolicy, RateLimiter rateLimiter) {
 		this.userRepository = userRepository;
 		this.postRepository = postRepository;
+		this.commentRepository = commentRepository;
 		this.tokenRepository = tokenRepository;
 		this.passwordEncoder = passwordEncoder;
 		this.demoPolicy = demoPolicy;
@@ -160,7 +166,8 @@ public class AccountLifecycleService {
 		userRepository.saveAndFlush(user);
 
 		tokenRepository.deleteAllForUser(id);
-		postRepository.clearImagesForUser(id);
+		postRepository.redactForUser(id, REDACTED_CONTENT);
+		commentRepository.redactForUser(id, REDACTED_CONTENT);
 		logger.info("Deleted (anonymized) user id={}", id);
 	}
 

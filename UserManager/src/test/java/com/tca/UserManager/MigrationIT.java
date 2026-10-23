@@ -92,6 +92,18 @@ class MigrationIT {
 			assertThat(post.getInt("likes_count")).isEqualTo(3);
 		}
 
+		// Exact history: one BASELINE marker at version 1 (V1 itself never ran), then V2-V4.
+		try (Connection c = DriverManager.getConnection(url, PG.getUsername(), PG.getPassword());
+				Statement s = c.createStatement()) {
+			ResultSet h = s.executeQuery(
+					"SELECT version, type, success FROM flyway_schema_history ORDER BY installed_rank");
+			java.util.List<String> rows = new java.util.ArrayList<>();
+			while (h.next()) {
+				rows.add(h.getString("version") + ":" + h.getString("type") + ":" + h.getBoolean("success"));
+			}
+			assertThat(rows).containsExactly("1:BASELINE:true", "2:SQL:true", "3:SQL:true", "4:SQL:true");
+		}
+
 		// Running again is a no-op.
 		assertThat(flyway(url).migrate().migrationsExecuted).isZero();
 	}

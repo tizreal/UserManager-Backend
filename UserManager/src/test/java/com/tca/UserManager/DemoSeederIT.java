@@ -27,18 +27,17 @@ class DemoSeederIT extends IntegrationTestBase {
 	}
 
 	@Test
-	void seedingClearsDemoContentKeepsOthersAndPinsTheDemoRole() throws Exception {
+	void seedingPinsTheDemoRoleAndPasswordWithoutTouchingContent() throws Exception {
 		User demo = createUser("demo", Role.ADMIN); // e.g. promoted by mistake
-		User alice = createUser("alice", Role.USER);
-		createPost(demo, "visitor spam");
-		var alicePost = createPost(alice, "alice's post");
+		var demoPost = createPost(demo, "visitor post");
 
 		runSeeder();
 
 		User demoAfter = users.findByUsername("demo").orElseThrow();
 		assertThat(demoAfter.getRole()).isEqualTo(Role.USER);
 		assertThat(passwordEncoder.matches("public-demo-password", demoAfter.getPassword())).isTrue();
-		assertThat(posts.findAll()).extracting(p -> p.getId()).containsExactly(alicePost.getId());
+		// Content cleanup is a separate, explicit/scheduled job (DemoContentCleanupService)
+		assertThat(posts.findById(demoPost.getId())).isPresent();
 	}
 
 	@Test

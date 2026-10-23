@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Repository
@@ -20,4 +21,15 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("DELETE FROM Comment c WHERE c.user.userId = :userId")
     int deleteByUserId(@Param("userId") Integer userId);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("DELETE FROM Comment c WHERE c.user.userId = :userId AND c.createdAt < :cutoff")
+    int deleteByUserIdCreatedBefore(@Param("userId") Integer userId, @Param("cutoff") LocalDateTime cutoff);
+
+    boolean existsByPostIdAndUserUserIdNot(Long postId, Integer userId);
+
+    // Account deletion: the comment stays in the thread, its text is removed.
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Comment c SET c.content = :placeholder WHERE c.user.userId = :userId")
+    int redactForUser(@Param("userId") Integer userId, @Param("placeholder") String placeholder);
 }

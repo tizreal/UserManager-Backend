@@ -81,6 +81,7 @@ public class WebSecurityConfig {
 				.requestMatchers(HttpMethod.GET, "/user/", "/user/*").hasRole("ADMIN")
 				.requestMatchers(HttpMethod.DELETE, "/user/*").hasRole("ADMIN")
 				.requestMatchers(HttpMethod.POST, "/user/*/deactivate", "/user/*/reactivate").hasRole("ADMIN")
+				.requestMatchers("/admin/**").hasRole("ADMIN")
 				// Everything else (posts, comments) requires a logged-in user
 				.anyRequest().authenticated())
 			.exceptionHandling(ex -> ex

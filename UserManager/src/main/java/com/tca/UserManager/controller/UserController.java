@@ -23,6 +23,7 @@ import com.tca.UserManager.dto.SignupRequest;
 import com.tca.UserManager.dto.UpdateProfileRequest;
 import com.tca.UserManager.dto.UserResponse;
 import com.tca.UserManager.exception.domain.InvalidTokenException;
+import com.tca.UserManager.security.ClientIpResolver;
 import com.tca.UserManager.security.RateLimiter;
 import com.tca.UserManager.security.RateLimiter.Rule;
 import com.tca.UserManager.service.AccountLifecycleService;
@@ -41,26 +42,28 @@ public class UserController {
 	private final PasswordResetService passwordResetService;
 	private final AccountLifecycleService accountLifecycleService;
 	private final RateLimiter rateLimiter;
+	private final ClientIpResolver clientIpResolver;
 
 	public UserController(UserService userService, PasswordResetService passwordResetService,
-			AccountLifecycleService accountLifecycleService, RateLimiter rateLimiter) {
+			AccountLifecycleService accountLifecycleService, RateLimiter rateLimiter,
+			ClientIpResolver clientIpResolver) {
 		this.userService = userService;
 		this.passwordResetService = passwordResetService;
 		this.accountLifecycleService = accountLifecycleService;
 		this.rateLimiter = rateLimiter;
+		this.clientIpResolver = clientIpResolver;
 	}
 
-	// Client address as seen by Tomcat; behind Render's proxy this relies on
-	// server.forward-headers-strategy=native (see application.properties).
-	private static String clientIp(HttpServletRequest request) {
-		return request.getRemoteAddr();
+	/** Per-IP limit when the client IP is trustworthy, otherwise a global limit. */
+	private void limitClient(Rule perIp, Rule global, HttpServletRequest http) {
+		rateLimiter.checkClient(perIp, global, clientIpResolver.resolve(http));
 	}
 
 	// ---- Public ----
 
 	@PostMapping("/signup")
 	public UserResponse signup(@Valid @RequestBody SignupRequest request, HttpServletRequest http) {
-		rateLimiter.check(Rule.SIGNUP_PER_IP, clientIp(http));
+		limitClient(Rule.SIGNUP_PER_IP, Rule.SIGNUP_GLOBAL, http);
 		return userService.signup(request);
 	}
 
@@ -68,7 +71,7 @@ public class UserController {
 	@GetMapping("/verify/email")
 	public void verifyEmail(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
 			HttpServletRequest http) {
-		rateLimiter.check(Rule.VERIFY_EMAIL_PER_IP, clientIp(http));
+		limitClient(Rule.VERIFY_EMAIL_PER_IP, Rule.VERIFY_EMAIL_GLOBAL, http);
 		if (authorization == null || !authorization.startsWith("Bearer ")) {
 			throw new InvalidTokenException("This verification link is invalid or has expired");
 		}
@@ -77,7 +80,7 @@ public class UserController {
 
 	@PostMapping("/login")
 	public ResponseEntity<UserResponse> login(@Valid @RequestBody LoginRequest request, HttpServletRequest http) {
-		rateLimiter.check(Rule.LOGIN_PER_IP, clientIp(http));
+		limitClient(Rule.LOGIN_PER_IP, Rule.LOGIN_GLOBAL, http);
 		rateLimiter.check(Rule.LOGIN_PER_ACCOUNT, request.username().trim());
 		UserService.LoginResult result = userService.login(request);
 		return new ResponseEntity<>(result.user(), userService.tokenHeader(result.accessToken()), OK);
@@ -86,14 +89,14 @@ public class UserController {
 	/** Always 200, whether or not the email is registered. */
 	@GetMapping("/reset/{email}")
 	public void sendResetPasswordEmail(@PathVariable String email, HttpServletRequest http) {
-		rateLimiter.check(Rule.RESET_REQUEST_PER_IP, clientIp(http));
+		limitClient(Rule.RESET_REQUEST_PER_IP, Rule.RESET_REQUEST_GLOBAL, http);
 		rateLimiter.check(Rule.RESET_REQUEST_PER_ACCOUNT, email.trim());
 		passwordResetService.requestReset(email);
 	}
 
 	@PostMapping("/reset")
 	public void resetPassword(@Valid @RequestBody ResetPasswordRequest request, HttpServletRequest http) {
-		rateLimiter.check(Rule.RESET_SUBMIT_PER_IP, clientIp(http));
+		limitClient(Rule.RESET_SUBMIT_PER_IP, Rule.RESET_SUBMIT_GLOBAL, http);
 		passwordResetService.resetPassword(request.token(), request.password());
 	}
 

@@ -56,6 +56,26 @@ class AuthenticationIT extends IntegrationTestBase {
 	}
 
 	@Test
+	void rotatingTheSigningSecretInvalidatesPreviouslyIssuedTokens() throws Exception {
+		User alice = createUser("alice", Role.USER);
+		// A JwtService configured exactly like production but with the PREVIOUS secret.
+		com.tca.UserManager.provider.ResourceProvider oldConfig =
+				org.mockito.Mockito.mock(com.tca.UserManager.provider.ResourceProvider.class);
+		org.mockito.Mockito.when(oldConfig.getJwtSecret()).thenReturn("previous-secret-previous-secret-previous-secret-0000");
+		org.mockito.Mockito.when(oldConfig.getJwtIssuer()).thenReturn("BFN-TCA Bootcamp");
+		org.mockito.Mockito.when(oldConfig.getJwtAudience()).thenReturn("User Manager");
+		org.mockito.Mockito.when(oldConfig.getJwtExpiration()).thenReturn(3_600_000L);
+		com.tca.UserManager.security.JwtService previous = new com.tca.UserManager.security.JwtService();
+		org.springframework.test.util.ReflectionTestUtils.setField(previous, "provider", oldConfig);
+		String issuedBeforeRotation = previous.generateAccessToken(users.findById(alice.getUserId()).orElseThrow());
+
+		mvc.perform(get("/user/get").header(HttpHeaders.AUTHORIZATION, bearer(issuedBeforeRotation)))
+				.andExpect(status().isUnauthorized());
+		mvc.perform(get("/user/get").header(HttpHeaders.AUTHORIZATION, bearer(tokenFor(alice))))
+				.andExpect(status().isOk());
+	}
+
+	@Test
 	void emailVerificationTokenCannotBeUsedAsSession() throws Exception {
 		User alice = createUser("alice", Role.USER);
 		String verificationToken = jwtService.generateEmailVerificationToken(alice);

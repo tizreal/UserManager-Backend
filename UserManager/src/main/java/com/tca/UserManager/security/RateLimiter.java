@@ -27,12 +27,17 @@ public class RateLimiter {
 
 	public enum Rule {
 		LOGIN_PER_IP(30, Duration.ofMinutes(15)),
+		LOGIN_GLOBAL(600, Duration.ofMinutes(15)),
 		LOGIN_PER_ACCOUNT(10, Duration.ofMinutes(15)),
 		SIGNUP_PER_IP(5, Duration.ofHours(1)),
+		SIGNUP_GLOBAL(50, Duration.ofHours(1)),
 		RESET_REQUEST_PER_IP(10, Duration.ofHours(1)),
+		RESET_REQUEST_GLOBAL(100, Duration.ofHours(1)),
 		RESET_REQUEST_PER_ACCOUNT(3, Duration.ofHours(1)),
 		RESET_SUBMIT_PER_IP(10, Duration.ofHours(1)),
+		RESET_SUBMIT_GLOBAL(100, Duration.ofHours(1)),
 		VERIFY_EMAIL_PER_IP(20, Duration.ofHours(1)),
+		VERIFY_EMAIL_GLOBAL(300, Duration.ofHours(1)),
 		CURRENT_PASSWORD_PER_USER(10, Duration.ofMinutes(15)),
 		POST_PER_USER(20, Duration.ofHours(1)),
 		COMMENT_PER_USER(60, Duration.ofHours(1)),
@@ -77,6 +82,18 @@ public class RateLimiter {
 		}
 		if (windows.size() > 50_000) {
 			windows.entrySet().removeIf(e -> now - e.getValue().startMillis() >= Duration.ofHours(1).toMillis());
+		}
+	}
+
+	/**
+	 * Per-client limit when the client IP is known; otherwise (null, see ClientIpResolver)
+	 * a coarse global limit, so spoofable headers never decide who gets throttled.
+	 */
+	public void checkClient(Rule perIp, Rule global, String clientIpOrNull) {
+		if (clientIpOrNull != null) {
+			check(perIp, clientIpOrNull);
+		} else {
+			check(global, "all-clients");
 		}
 	}
 

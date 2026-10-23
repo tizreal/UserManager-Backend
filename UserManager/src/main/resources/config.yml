@@ -11,6 +11,11 @@ app:
   # cannot be changed and which cannot request password resets.
   demo:
     username: ${DEMO_USERNAME:demo}
+    # Disposable demo content (written by the demo account) older than this is removed by
+    # DemoContentCleanupService: on demand (POST /api/admin/demo-content/cleanup) or on the
+    # cron schedule below. "-" disables the schedule (default). Example hourly: "0 0 * * * *".
+    content-retention: ${DEMO_CONTENT_RETENTION:PT24H}
+    cleanup-cron: ${DEMO_CLEANUP_CRON:-}
   mail:
     from: "noreply@usermanager.com"
     verification-subject: "Verify your email address"
