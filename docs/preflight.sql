@@ -212,14 +212,12 @@ SELECT count(*) FILTER (WHERE email_verified IS NULL)  AS email_verified_null,
 FROM users;
 
 
--- ===================== I: incident context (informational, not proof) =================
+-- ===================== I: informational context (not proof) ===========================
 
--- I1. Timestamp anomaly that the old signup bug could leave behind. An overwritten account
---     keeps its original, LOWER user_id but gets a NEW created_at, so its created_at is
---     later than that of some account with a HIGHER user_id. This flags the lower-id row
---     (the possibly overwritten one) and shows the earliest later-id timestamp it exceeds.
---     NOT PROOF of takeover: manual edits, imports, restores, scripts or clock changes cause
---     the same pattern. Corroborate with request logs before drawing conclusions. (The demo
+-- I1. Timestamp anomaly: an account whose created_at is later than that of some account
+--     with a HIGHER user_id (ids are assigned in creation order). This flags the lower-id
+--     row and shows the earliest later-id timestamp it exceeds. NOT PROOF of anything:
+--     manual edits, imports, restores, scripts or clock changes cause the same pattern. Corroborate with request logs before drawing conclusions. (The demo
 --     seeder does not change created_at of existing accounts.)
 SELECT user_id, user_name, created_at, updated_at, earliest_created_at_of_higher_ids
 FROM (

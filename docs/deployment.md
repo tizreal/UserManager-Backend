@@ -1,17 +1,16 @@
 # Security release: deployment runbook
 
-This release fixes critical authorization and data-exposure vulnerabilities and adds Flyway
-migrations (V1 baseline, V2–V4). The condensed, ordered checklist with every approval
+Runbook for deploying the release that introduced role-based authorization, session
+revocation, hashed single-use reset tokens and Flyway migrations (V1 baseline, V2–V4). The condensed, ordered checklist with every approval
 checkpoint is `docs/deployment-checklist.md`; this runbook explains each step.
 
 **Ground rules**
 
 - Every step marked **[approval]** changes something outside the repository and needs explicit
   approval first.
-- **The old Render service is never resumed and no commit older than the security merge is
+- **The old Render service is never resumed and no commit older than the release merge is
   ever deployed.** Render does not document whether *Resume* restarts the last built image; on
-  the old service that image is the vulnerable build, which ignores maintenance mode and would
-  also pass schema validation after the migrations. The release goes to a **new Render
+  the old service that image predates this release and does not support maintenance mode. The release goes to a **new Render
   service** created in maintenance mode. The old service stays suspended until it is deleted.
 - The backend stays closed to the public (maintenance mode) until it has been verified.
 
@@ -20,7 +19,7 @@ Versions: Spring Boot 3.4.1, Hibernate 6.6.4, Flyway 10.20.1, PostgreSQL JDBC 42
 ## 1. Preflight (read-only) — done 2026-10-23
 
 `docs/preflight.sql` checks that production matches the V1 baseline (S1–S8), that the data
-won't break V2–V4 or the new code (D1–D4), incident context (I1–I3, never proof) and roles
+won't break V2–V4 or the new code (D1–D4), informational context (I1–I3, never proof) and roles
 (B1–B6). Two roles may be the same or different: the **migration role** (what Flyway connects
 as: `SPRING_FLYWAY_USER` if set, otherwise `DATABASE_USERNAME`) and the **application role**
 (`DATABASE_USERNAME`). Run B1–B3 as the migration role and B1 + B5 as the application role;
@@ -40,7 +39,7 @@ B6 only if the roles differ. Output rows are labelled **BLOCKER**, **REVIEW** or
 | D2 | No case-insensitive duplicate usernames/emails | Any (V2's unique indexes would fail) |
 | D3 | No `deleted-user-` usernames | REVIEW: rename first |
 | D4 | NULL `email_verified`/username/email/password | REVIEW: those accounts can't sign in |
-| I1 | Possibly overwritten accounts | Never: context only, **not proof** |
+| I1 | Timestamp anomalies (lower id, later `created_at`) | Never: context only, **not proof** |
 | I2 | Id range summary | Never: gaps are **not evidence** of deletion |
 | I3 | Demo account state | Never |
 | B1–B3 | Migration role can alter `users` and create in `public` | It can't |
@@ -240,8 +239,7 @@ No API can grant `ADMIN` (signup ignores `role`/`userId`; rehearsed). The role i
 the database on every request.
 
 1. With the bypass key, log in as the owner account (`POST /api/user/login`) and change its
-   password (`POST /api/user/update` with `password` and `currentPassword`): every old hash
-   was exposed. Put the JSON bodies in a file outside the repository, send them with
+   password (`POST /api/user/update` with `password` and `currentPassword`) before promoting it. Put the JSON bodies in a file outside the repository, send them with
    `--data @file`, then delete the file. Older sessions are signed out.
 2. **[approval]** In the Neon SQL editor (production), look up the account, then:
    ```sql
@@ -281,13 +279,13 @@ reliably:
 Counters live in memory: they reset on restart and are not shared across instances. A shared
 store would be needed for stronger guarantees.
 
-## 9. Recovery (never by redeploying the vulnerable backend)
+## 9. Recovery (never by redeploying a pre-release build)
 
 | Situation | Action |
 |---|---|
 | Migration fails or hangs during the first boot | The service never starts, so nothing is exposed. The database may be at V1, V2 or V3 (section 2) — check `flyway_schema_history` (read-only). Fix the cause; fix-forward PR with green CI if a script changes; redeploy **the new service**. Restore only if data is damaged |
 | Release misbehaves after opening | `MAINTENANCE_MODE=true` (save and deploy; confirm the deploy shows the same commit) or suspend the **new** service; diagnose; fix forward through a PR with green CI |
-| A bad *new* build | Render → new service → Deploys → redeploy an earlier deploy **of the new service** whose commit is the security merge or later (check the SHA). Never the old service, never an older commit |
+| A bad *new* build | Render → new service → Deploys → redeploy an earlier deploy **of the new service** whose commit is the release merge or later (check the SHA). Never the old service, never an older commit |
 | Data damaged | Maintenance mode, then restore (section 5) **[approval]** |
 | Frontend problem (e.g. a CSP block) | **Fix forward** by default. Rolling back to a Vercel deployment from **before** the frontend merge is **not safe**: that build calls the old backend host, uses the old API contract and has no CSP or security headers. Roll back only to an earlier deployment built **after** the merge with the new `VITE_API_URL` (verify its commit and its CSP header), and note that after a Vercel rollback new production deployments may not be promoted automatically until the rollback is undone |
 | Anything else uncertain | Maintenance mode first; it is always safe and reversible |
@@ -319,37 +317,14 @@ After the new service exists (its host is `<new-render-host>`):
 ## 11. Credential rotation
 
 **JWT_SECRET** is new on the new service, which invalidates every token signed by the old
-deployment (also rejected anyway: old tokens lack the purpose claim). Emailed verification
+deployment. Emailed verification
 links stop working (users can request new ones); reset links are database tokens and
 unaffected. Rotation is rehearsed (section 4). Store it only in Render and a password manager.
 
 Rotate `DATABASE_PASSWORD` or `RESEND_API_KEY` only on evidence of exposure (this release never
 logs them). Use a new `MAINTENANCE_BYPASS_KEY` for every window and delete it afterwards.
 
-## 12. Incident assessment (production logs and data)
-
-Before this release, production logged at DEBUG:
-- the JWT filter logged full `Authorization` headers (access tokens, valid 24h);
-- Spring MVC logged request bodies (truncated to about 100 characters): **`POST /user/reset`
-  bodies, which start with the new password in plain text** (followed by part of the reset
-  token). Login/signup/update bodies were logged as `User` objects without the password.
-
-Any logged-in user could also read every account's bcrypt hash, email and phone, and delete
-users and posts.
-
-1. Render (old service) → Logs: note the retention period. Search `/user/reset`,
-   `Read "application/json`, `Auth Header`, `deleteUserById`, `DELETE /api/user`,
-   `DELETE /api/posts`, `signup()`.
-2. List the accounts with logged reset bodies; those passwords are exposed and their owners
-   should change them (and wherever they reused them).
-3. Review preflight I1 against request logs. I2's id summary is context only.
-4. Delete the affected logs if Render allows it; otherwise record that they expire with the
-   retention window. Check log streams or drains. (Deleting the old service also removes its
-   logs: do the assessment first.)
-5. Treat all bcrypt hashes as exposed: owners of real accounts should change passwords.
-6. Record the findings and dates.
-
-## 13. Smoke tests
+## 12. Smoke tests
 
 API base `https://<new-render-host>/api`; during maintenance add `-H "X-Maintenance-Key: $KEY"`.
 
@@ -372,14 +347,12 @@ API base `https://<new-render-host>/api`; during maintenance add `-H "X-Maintena
 - [ ] Admin can deactivate/reactivate a test account; deleting a test account shows "Deleted user" and "[deleted]".
 - [ ] Response headers include `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`; the console shows no CSP violations; API calls go to the new host.
 
-## 14. Remaining risks after deployment
+## 13. Remaining risks after deployment
 
 | Risk | Severity | Mitigation / next step |
 |---|---|---|
-| Plain-text reset passwords and access tokens in historical Render logs | **High** until assessed | Section 12; old tokens are already invalid |
-| Previously exposed bcrypt hashes | **Medium** | Password changes for real accounts |
 | Access token stored in localStorage | **Medium** (accepted, separate) | Any script running on the frontend origin can read it until it expires or the session is revoked. CSP and a 4h lifetime reduce this. Fix: cookie-based sessions (separate proposal) |
-| Old Render service still exists (suspended, vulnerable image) | **Medium** until deleted | Never resume; delete after verification and incident assessment |
+| Old Render service still exists (suspended) | **Medium** until deleted | Never resume; delete after verification |
 | Shared caps on email-sending endpoints while `CLIENT_IP_MODE=UNKNOWN` | **Low-Medium** | A flood can pause new signups/reset emails for up to an hour; logins unaffected |
 | Per-instance, in-memory rate limiting | **Medium** | Global caps + per-account limits; shared store if scaled out |
 | No `lock_timeout` for migrations | **Low** | Session check before deploying (section 6); a hang ends in a rolled-back, retryable migration |
