@@ -42,7 +42,7 @@ Tick in order. Details for every step are in `docs/deployment.md` (section numbe
 | C6 | Client-IP verification (§8); decide `CLIENT_IP_MODE`/`HEADER` | You | — |
 | C7 | Owner password change via API with the bypass key (§7) | You | — |
 | C8 | Promote the owner: the §7 `UPDATE` → `UPDATE 1` | You | **[A]** |
-| C9 | Private smoke tests (§13) | You | — |
+| C9 | Private smoke tests (§12) | You | — |
 
 ## Phase D — frontend
 
@@ -58,14 +58,13 @@ Tick in order. Details for every step are in `docs/deployment.md` (section numbe
 | # | Step | Who | Gate |
 |---|---|---|---|
 | E1 | New service env: `MAINTENANCE_MODE=false`, delete `MAINTENANCE_BYPASS_KEY`, `CLIENT_IP_DIAGNOSTICS=false`, final `CLIENT_IP_*`; confirm the redeploy shows the same SHA | You | **[A]** |
-| E2 | Public smoke tests through the UI (§13), including CSP (no console violations) | You | — |
+| E2 | Public smoke tests through the UI (§12), including CSP (no console violations) | You | — |
 | E3 | Optional: Auto-Deploy on for the new service | You | **[A]** |
 
 ## Phase F — after
 
 | # | Step | Who | Gate |
 |---|---|---|---|
-| F1 | Incident assessment on the **old** service's logs (§12) — before deleting it | You (Claude can help analyse) | — |
 | F2 | Delete the old Render service | You | **[A]** |
 | F3 | Re-enable the UserManager demo on the portfolio and profile README | Claude | **[A]** |
 | F4 | Owners of real accounts asked to change passwords | You | — |

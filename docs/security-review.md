@@ -25,7 +25,7 @@ Sessions are revoked (token_version incremented) on password reset, password cha
 deactivation and deletion. Disabled and deleted accounts are rejected at login and by the
 filter.
 
-## Access-token lifetime and storage (review)
+## Access-token lifetime and storage
 
 **Current state.** The access token lives for 24 hours in `localStorage` and is sent as a
 Bearer header. The server re-checks the account (existence, status, verification, token
@@ -35,10 +35,9 @@ A stolen token stays usable until it expires unless one of those events happens.
 **Risks.** Any XSS in the frontend can read `localStorage`. A 24-hour lifetime gives a stolen
 token a long window.
 
-**Done in this release.**
+**Mitigations in place.**
 - The frontend handles any 401 globally (an axios interceptor clears the token and returns to
-  login), so a shorter lifetime never leaves a page broken. Previously only two pages handled
-  401.
+  login), so a shorter lifetime never leaves a page broken.
 - An enforced Content-Security-Policy plus `X-Content-Type-Options`, `Referrer-Policy`,
   `X-Frame-Options` and `Permissions-Policy` headers in `vercel.json`. Verified with a
   production-API build served with these exact headers: every route, logged in and out,
@@ -79,7 +78,7 @@ Client IPs come from `ClientIpResolver`, never from `X-Forwarded-For` (Render ap
 client-supplied value, so it can be forged). Modes: `UNKNOWN` (default: no header trusted;
 per-IP rules fall back to global caps), `TRUSTED_HEADER` (one single-value header, honored only
 when the TCP peer is inside `CLIENT_IP_TRUSTED_PROXIES`), `REMOTE_ADDR` (no proxy). The right
-header is verified empirically during the maintenance window (runbook §6).
+header is verified empirically during the maintenance window (runbook §8).
 
 When the client IP is unknown, only email-sending endpoints (signup, reset request) fall
 back to a shared global cap, to bound email cost. Login, verification and reset submission
