@@ -39,14 +39,18 @@ public class WebSecurityConfig {
 	private final CustomAuthEntryPoint authEntryPoint;
 	private final HandlerExceptionResolver resolver;
 	private final List<String> allowedOrigins;
+	private final List<String> healthOrigins;
 
 	public WebSecurityConfig(JwtAuthorizationFilter jwtAuthorizationFilter, CustomAuthEntryPoint authEntryPoint,
 			@Qualifier("handlerExceptionResolver") HandlerExceptionResolver resolver,
-			@Value("${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000,https://usermanager-frontend.vercel.app}") List<String> allowedOrigins) {
+			@Value("${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000,https://usermanager-frontend.vercel.app}") List<String> allowedOrigins,
+			// Sites that may read only /health, e.g. the portfolio's demo-readiness check.
+			@Value("${CORS_HEALTH_ORIGINS:https://my-portfolio-nine-omega-88.vercel.app}") List<String> healthOrigins) {
 		this.jwtAuthorizationFilter = jwtAuthorizationFilter;
 		this.authEntryPoint = authEntryPoint;
 		this.resolver = resolver;
 		this.allowedOrigins = allowedOrigins;
+		this.healthOrigins = healthOrigins;
 	}
 
 	@Bean
@@ -56,7 +60,13 @@ public class WebSecurityConfig {
 		configuration.setAllowedMethods(List.of("GET", "POST", "DELETE", "OPTIONS"));
 		configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
 		configuration.setExposedHeaders(List.of("Authorization"));
+		// /health is registered first so it matches before /**: GET only, no credentials, and
+		// readable by the frontend's origins plus the health-only origins.
+		CorsConfiguration health = new CorsConfiguration();
+		health.setAllowedOrigins(java.util.stream.Stream.concat(allowedOrigins.stream(), healthOrigins.stream()).distinct().toList());
+		health.setAllowedMethods(List.of("GET"));
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+		source.registerCorsConfiguration("/health", health);
 		source.registerCorsConfiguration("/**", configuration);
 		return source;
 	}
