@@ -9,6 +9,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface PostRepository extends JpaRepository<Post, Long> {
@@ -17,6 +18,9 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     List<Post> findAllByOrderByCreatedAtDesc();
 
     boolean existsByUserUserId(Integer userId);
+
+    // Demo seeding identifies each sample post by its author and exact text.
+    Optional<Post> findFirstByUserUserIdAndContent(Integer userId, String content);
 
     List<Post> findByUserUserId(Integer userId);
 
