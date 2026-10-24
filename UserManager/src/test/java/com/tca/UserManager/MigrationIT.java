@@ -124,5 +124,50 @@ class MigrationIT {
 			cols.next();
 			assertThat(cols.getInt(1)).isZero();
 		}
+		// The baseline was committed before V2 ran; the failed V2 left no history row.
+		assertThat(history(url)).containsExactly("1:BASELINE:true");
+
+		// Once the data is fixed, the next run resumes at V2 without any repair step.
+		execute(url, "DELETE FROM users WHERE user_name = 'Alice'");
+		assertThat(flyway(url).migrate().migrationsExecuted).isEqualTo(3);
+		assertThat(history(url)).containsExactly("1:BASELINE:true", "2:SQL:true", "3:SQL:true", "4:SQL:true");
+	}
+
+	@Test
+	void aFailureInALaterMigrationKeepsEarlierOnesAndResumesFromThere() throws Exception {
+		String url = newDatabase();
+		execute(url, v1Sql());
+		// Makes V3's CREATE TABLE fail after V2 has already been committed.
+		execute(url, "CREATE TABLE password_reset_tokens (conflict integer)");
+
+		assertThatThrownBy(() -> flyway(url).migrate()).isInstanceOf(FlywayException.class);
+
+		// Migrations are separate transactions: V2 stays applied, V3 left nothing behind,
+		// V4 never ran. The database is at version 2.
+		assertThat(history(url)).containsExactly("1:BASELINE:true", "2:SQL:true");
+		try (Connection c = DriverManager.getConnection(url, PG.getUsername(), PG.getPassword());
+				Statement s = c.createStatement()) {
+			ResultSet cols = s.executeQuery("SELECT string_agg(column_name, ',' ORDER BY column_name) "
+					+ "FROM information_schema.columns WHERE table_name = 'users' "
+					+ "AND column_name IN ('role', 'token_version', 'status')");
+			cols.next();
+			assertThat(cols.getString(1)).isEqualTo("role,token_version");
+		}
+
+		execute(url, "DROP TABLE password_reset_tokens");
+		assertThat(flyway(url).migrate().migrationsExecuted).isEqualTo(2);
+		assertThat(history(url)).containsExactly("1:BASELINE:true", "2:SQL:true", "3:SQL:true", "4:SQL:true");
+	}
+
+	private static java.util.List<String> history(String url) throws Exception {
+		try (Connection c = DriverManager.getConnection(url, PG.getUsername(), PG.getPassword());
+				Statement s = c.createStatement()) {
+			ResultSet h = s.executeQuery("SELECT version, type, success FROM flyway_schema_history ORDER BY installed_rank");
+			java.util.List<String> rows = new java.util.ArrayList<>();
+			while (h.next()) {
+				rows.add(h.getString("version") + ":" + h.getString("type") + ":" + h.getBoolean("success"));
+			}
+			return rows;
+		}
 	}
 }
