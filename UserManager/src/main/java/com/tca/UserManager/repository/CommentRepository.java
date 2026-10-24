@@ -28,6 +28,9 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
 
     boolean existsByPostIdAndUserUserIdNot(Long postId, Integer userId);
 
+    // Demo seeding identifies each sample comment by its post, author and exact text.
+    boolean existsByPostIdAndUserUserIdAndContent(Long postId, Integer userId, String content);
+
     // Account deletion: the comment stays in the thread, its text is removed.
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE Comment c SET c.content = :placeholder WHERE c.user.userId = :userId")

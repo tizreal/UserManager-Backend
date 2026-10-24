@@ -9,6 +9,9 @@ administrators.
 (use **Fill demo login** on the sign-in page) · **Frontend repository:**
 [tizreal/usermanager-frontend](https://github.com/tizreal/usermanager-frontend)
 
+The demo is pre-loaded with fictional sample data: posts by the Ada, Alan and Grace accounts
+are sample content, and posts made with the demo account are cleared automatically.
+
 The API runs on Render's free tier and sleeps when idle, so the first request can take a
 minute or two.
 
@@ -107,7 +110,7 @@ cd UserManager
 ./mvnw verify      # requires Docker for Testcontainers
 ```
 
-141 tests: 20 unit tests and 121 integration tests that run against a real PostgreSQL 16
+152 tests: 20 unit tests and 132 integration tests that run against a real PostgreSQL 16
 container. They cover authentication, authorization for every role, account takeover and
 mass-assignment attempts, password reset and token reuse, email changes, account lifecycle,
 demo restrictions, rate limits, client-IP resolution, maintenance mode, log redaction and
@@ -131,7 +134,7 @@ Requirements: Java 21, Docker.
    export MAIL_HOST=localhost MAIL_USERNAME=unused MAIL_PASSWORD=unused
    export CLIENT_URL=http://localhost:5173           # frontend URL used in email links
    export CLIENT_IP_MODE=REMOTE_ADDR                 # no proxy in front locally
-   export APP_SEED_DEMO=true                         # optional: creates the demo account
+   export APP_SEED_DEMO=true                         # optional: demo account and sample feed
    ```
 3. Run the API on `http://localhost:8080/api`:
    ```bash
