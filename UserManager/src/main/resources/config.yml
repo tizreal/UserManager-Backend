@@ -2,31 +2,24 @@ app:
   security:
     jwt:
       secret: ${JWT_SECRET}
-      expiration: 86400000
+      # Access-token lifetime in ms (JWT_EXPIRATION). Default 24h; see docs/security-review.md.
+      expiration: ${JWT_EXPIRATION:86400000}
       refresh-expiration: 604800000
       issuer: 'BFN-TCA Bootcamp'
       audience: User Manager
-      prefix: 'Bearer '
-      excluded:
-        urls: /user/login,/user/signup,/user/reset/*,/user/verify/email,/test/**,/error,/health
+  # The shared public demo login. It is a normal USER whose credentials and profile
+  # cannot be changed and which cannot request password resets.
+  demo:
+    username: ${DEMO_USERNAME:demo}
+    # Disposable demo content (written by the demo account) older than this is removed by
+    # DemoContentCleanupService: on demand (POST /api/admin/demo-content/cleanup) or on the
+    # cron schedule below. "-" disables the schedule (default). Example hourly: "0 0 * * * *".
+    content-retention: ${DEMO_CONTENT_RETENTION:PT24H}
+    cleanup-cron: ${DEMO_CLEANUP_CRON:-}
   mail:
     from: "noreply@usermanager.com"
     verification-subject: "Verify your email address"
     reset-password-subject: "Reset your password"
-  cors:
-    allowed-origins:
-      - ${CLIENT_URL:http://localhost:5173}
-      
-    allowed-methods:
-      - GET
-      - POST
-      - PUT
-      - DELETE
-      - OPTIONS
-    allowed-headers:
-      - "*"
-    allow-credentials: true
-    max-age: 3600
 
 client:
   url: ${CLIENT_URL:http://localhost:5173}
